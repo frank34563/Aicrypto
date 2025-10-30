@@ -37,15 +37,23 @@ logger = logging.getLogger(__name__)
 # === DATABASE ===
 Base = declarative_base()
 
-# === FIX DATABASE_URL + DRIVER ===
+# === FORCE psycopg DRIVER ===
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 if DATABASE_URL:
+    # Railway gives: postgres://user:pass@host:port/db
     if DATABASE_URL.startswith("postgres://"):
-        # CORRECT: Use psycopg (NOT psycopg2!)
+        # CRITICAL: Use +psycopg:// (NOT psycopg2)
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+    elif DATABASE_URL.startswith("postgresql://"):
+        # If already postgresql://, force +psycopg
+        if "+psycopg" not in DATABASE_URL:
+            DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 else:
     DATABASE_URL = "sqlite+aiosqlite:///bot.db"
+
+# DEBUG: Print URL (remove in prod)
+# print("DATABASE_URL:", DATABASE_URL)
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -188,6 +196,7 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 
 
