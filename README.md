@@ -1,18 +1,13 @@
-# AiCrypto Investment Bot (v2.0 – Fixed + Postgres + Referrals)
+# AiCrypto Bot – Production Ready
 
-## New Features
-- **Postgres Support:** Production-ready DB (Railway auto-provision).
-- **Referrals:** Unique links, 5% first deposit bonus, 1% daily profit share.
-- **Fixed for Python 3.13:** Uses python-telegram-bot v21+.
+- Python 3.13 + asyncpg + SQLAlchemy
+- Postgres (Railway) or SQLite (local)
+- 1.5% daily profit
+- Referral system (5% first deposit + 1% daily)
+- Admin approval
 
-## Setup
-1. Copy `.env.example` → `.env` (local) or add vars in Railway.
-2. For Postgres: Provision in Railway → Copy DATABASE_URL.
-3. `pip install -r requirements.txt`
-4. `python bot.py`
-
-## Deploy on Railway
-1. Push to GitHub.
-2. New Project → GitHub Repo → Provision Postgres (free tier).
-3. Add vars: BOT_TOKEN, ADMIN_ID, MASTER_WALLET, DATABASE_URL.
-4. Deploy – Bot live!
+## Deploy
+1. Push to GitHub
+2. Railway → New Project → GitHub + Postgres
+3. Add: BOT_TOKEN, ADMIN_ID, MASTER_WALLET, DATABASE_URL
+4. Done!
