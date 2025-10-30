@@ -25,44 +25,42 @@ from sqlalchemy.dialects.postgresql import DECIMAL
 
 load_dotenv()
 
-# === CONFIG ===
+# CONFIG
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN not set!")
-
-ADMIN_ID = int(os.getenv('ADMIN_ID', 0))
+ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbcDeF123...XyZ789')
 SUPPORT_USER = '@AiCrypto_Support1'
-DATABASE_URL = os.getenv('DATABASE_URL')  # Railway: postgres://... → use asyncpg
+DATABASE_URL = os.getenv('DATABASE_URL')  # Railway Postgres
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# === DATABASE ===
+# STATES
+AMOUNT, TX_PROOF, WITHDRAW_AMOUNT, WALLET_ADDR, NETWORK = range(5)
+
+#DATABASE
 Base = declarative_base()
 
 if DATABASE_URL:
-    # Railway Postgres → use asyncpg
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+asyncpg://")
+    DATABASE_URL = DATABASE_URL.replace("postgresql", "postgresql+asyncpg")
     engine = create_async_engine(DATABASE_URL, echo=False)
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 else:
-    # Local fallback: SQLite
     engine = create_async_engine("sqlite+aiosqlite:///bot.db", echo=False)
-    async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 class User(Base):
     __tablename__ = 'users'
     id = Column(BigInteger, primary_key=True)
-    balance = Column(DECIMAL(15,2), default=0.0)
-    balance_in_process = Column(DECIMAL(15,2), default=0.0)
-    daily_profit = Column(DECIMAL(15,2), default=0.0)
-    total_profit = Column(DECIMAL(15,2), default=0.0)
+    balance = Column(DECIMAL(15,2), default=0.00)
+    balance_in_process = Column(DECIMAL(15,2), default=0.00)
+    daily_profit = Column(DECIMAL(15,2), default=0.00)
+    total_profit = Column(DECIMAL(15,2), default=0.00)
     referral_count = Column(Integer, default=0)
-    referral_earnings = Column(DECIMAL(15,2), default=0.0)
-    referrer_id = Column(BigInteger, nullable=True)
-    wallet_address = Column(String, nullable=True)
-    network = Column(String, nullable=True)
+    referral_earnings = Column(DECIMAL(15,2), default=0.00)
+    referrer_id = Column(BigInteger)
+    wallet_address = Column(String)
+    network = Column(String)
     joined_at = Column(DateTime, default=datetime.utcnow)
 
 class Transaction(Base):
@@ -72,27 +70,31 @@ class Transaction(Base):
     type = Column(String)
     amount = Column(DECIMAL(15,2))
     status = Column(String)
-    txid = Column(String, nullable=True)
-    wallet = Column(String, nullable=True)
-    network = Column(String, nullable=True)
+    txid = Column(String)
+    wallet = Column(String)
+    network = Column(String)
+    screenshot_path = Column(String)
+    admin_note = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 # Create tables
-import asyncio
 async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+import asyncio
 asyncio.run(init_db())
 
-# === HELPERS ===
+# HELPERS
 async def get_user(session: AsyncSession, user_id: int) -> Dict:
-    result = await session.execute(select(User).where(User.id == user_id))
+    stmt = select(User).where(User.id == user_id)
+    result = await session.execute(stmt)
     user = result.scalar_one_or_none()
     if not user:
         user = User(id=user_id)
         session.add(user)
         await session.commit()
+        return await get_user(session, user_id)
     return {
         'id': user.id,
         'balance': float(user.balance or 0),
@@ -116,10 +118,36 @@ async def log_transaction(session: AsyncSession, user_id: int, trans_type: str, 
     session.add(tx)
     await session.commit()
 
-# === STATES ===
-AMOUNT, TX_PROOF, WITHDRAW_AMOUNT, WALLET_ADDR, NETWORK = range(5)
+async def get_history(session: AsyncSession, user_id: int, limit: int = 5):
+    stmt = select(Transaction).where(Transaction.user_id == user_id).order_by(Transaction.created_at.desc()).limit(limit)
+    result = await session.execute(stmt)
+    return result.scalars().all()
 
-# === MENUS ===
+# DAILY PROFIT
+async def daily_profit_job():
+    async with async_session() as session:
+        stmt = select(User)
+        result = await session.execute(stmt)
+        users = result.scalars().all()
+        for user in users:
+            total = float(user.balance or 0) + float(user.balance_in_process or 0)
+            if total <= 0:
+                continue
+            profit = round(total * 0.015, 2)
+            user.daily_profit = profit
+            user.total_profit = float(user.total_profit or 0) + profit
+            user.balance = float(user.balance or 0) + profit
+            await session.merge(user)
+            await session.commit()
+            await log_transaction(session, user.id, 'profit', profit, 'credited')
+            # Referral bonus
+            if user.referrer_id:
+                ref_bonus = round(profit * 0.01, 2)
+                referrer = await get_user(session, user.referrer_id)
+                await update_user(session, user.referrer_id, referral_earnings=referrer['referral_earnings'] + ref_bonus, balance=referrer['balance'] + ref_bonus)
+                await log_transaction(session, user.referrer_id, 'referral_profit', ref_bonus, 'credited')
+
+# MENUS
 def main_menu():
     return ReplyKeyboardMarkup([
         ['Balance', 'Invest'],
@@ -128,72 +156,27 @@ def main_menu():
         ['Information', 'Help Up Arrow']
     ], resize_keyboard=True)
 
-# === DAILY PROFIT + REFERRALS ===
-async def daily_profit_job():
-    async with async_session() as session:
-        result = await session.execute(select(User))
-        users = result.scalars().all()
-        for user in users:
-            total = float(user.balance or 0) + float(user.balance_in_process or 0)
-            if total <= 0:
-                continue
-            profit = round(total * 0.015, 2)
-            await update_user(session, user.id,
-                daily_profit=profit,
-                total_profit=float(user.total_profit or 0) + profit,
-                balance=float(user.balance or 0) + profit
-            )
-            await log_transaction(session, user.id, 'profit', profit, 'credited')
-            # Referral bonus
-            if user.referrer_id:
-                ref_bonus = round(profit * 0.01, 2)
-                referrer = await get_user(session, user.referrer_id)
-                await update_user(session, user.referrer_id,
-                    referral_earnings=referrer['referral_earnings'] + ref_bonus,
-                    balance=referrer['balance'] + ref_bonus
-                )
-                await log_transaction(session, user.referrer_id, 'referral_profit', ref_bonus, 'credited')
-
-# === HANDLERS ===
+# HANDLERS
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     args = context.args
     async with async_session() as session:
         if args and args[0].startswith('ref_'):
-            try:
-                ref_id = int(args[0][4:])
-                if ref_id != user_id:
-                    await update_user(session, user_id, referrer_id=ref_id)
-                    await update_user(session, ref_id, referral_count=func.coalesce(User.referral_count, 0) + 1)
-                    await update.message.reply_text("Welcome! You joined via referral – bonus activated!")
-            except:
-                pass
-        else:
-            await update.message.reply_text("Welcome to AiCrypto!")
-        await update.message.reply_text("Use the menu:", reply_markup=main_menu())
+            ref_id = int(args[0][4:])
+            if ref_id != user_id:
+                await update_user(session, user_id, referrer_id=ref_id)
+                referrer = await get_user(session, ref_id)
+                await update_user(session, ref_id, referral_count=referrer['referral_count'] + 1)
+                await update.message.reply_text('Welcome! Joined via referral - bonus activated!')
+        await update.message.reply_text('Welcome to AiCrypto!', reply_markup=main_menu())
 
-async def show_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    async with async_session() as session:
-        user = await get_user(session, update.effective_user.id)
-        msg = f"""Balance
+# Add other handlers similarly, using async with async_session() as session for DB operations.
 
-Your Balance: {user['balance']:.2f}$
-In Process: {user['balance_in_process']:.2f}$
-Daily Profit: {user['daily_profit']:.2f}$
-Total Profit: {user['total_profit']:.2f}$
-Referral Earnings: {user['referral_earnings']:.2f}$
-
-Manager: {SUPPORT_USER}"""
-        await update.message.reply_text(msg)
-
-# === CONVERSATION HANDLERS (simplified for brevity) ===
-# (Invest, Withdraw, Settings, Referrals, etc. – same logic, just use async session)
-
-# === MAIN ===
+# MAIN
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # Add all handlers...
+    # Handlers...
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), show_balance))
 
@@ -201,7 +184,6 @@ def main():
     scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     scheduler.start()
 
-    print("AiCrypto Bot STARTED – Python 3.13 + asyncpg + Referrals")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
