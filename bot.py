@@ -37,20 +37,13 @@ logger = logging.getLogger(__name__)
 # === DATABASE ===
 Base = declarative_base()
 
-# === FIX DATABASE_URL PARSING ===
+# === FIX DATABASE_URL + DRIVER ===
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 if DATABASE_URL:
     if DATABASE_URL.startswith("postgres://"):
-        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
-    # Optional: Validate port
-    try:
-        from urllib.parse import urlparse
-        parsed = urlparse(DATABASE_URL)
-        if parsed.port is None:
-            raise ValueError("DATABASE_URL missing port")
-    except Exception as e:
-        raise ValueError(f"Invalid DATABASE_URL: {e}")
+        # Convert to psycopg format
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
 else:
     DATABASE_URL = "sqlite+aiosqlite:///bot.db"
 
@@ -195,4 +188,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
