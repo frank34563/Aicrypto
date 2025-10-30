@@ -1,26 +1,29 @@
--- Users
+-- Users (with referrals)
 CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY,
-    balance REAL DEFAULT 0.0,
-    balance_in_process REAL DEFAULT 0.0,
-    daily_profit REAL DEFAULT 0.0,
-    total_profit REAL DEFAULT 0.0,
+    id BIGINT PRIMARY KEY,
+    balance DECIMAL(15,2) DEFAULT 0.00,
+    balance_in_process DECIMAL(15,2) DEFAULT 0.00,
+    daily_profit DECIMAL(15,2) DEFAULT 0.00,
+    total_profit DECIMAL(15,2) DEFAULT 0.00,
+    referral_count INTEGER DEFAULT 0,
+    referral_earnings DECIMAL(15,2) DEFAULT 0.00,
+    referrer_id BIGINT,
     wallet_address TEXT,
     network TEXT,
-    joined_at TEXT DEFAULT CURRENT_TIMESTAMP
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Transactions
 CREATE TABLE IF NOT EXISTS transactions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER,
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT,
     type TEXT,
-    amount REAL,
+    amount DECIMAL(15,2),
     status TEXT,
     txid TEXT,
     wallet TEXT,
     network TEXT,
     screenshot_path TEXT,
     admin_note TEXT,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
