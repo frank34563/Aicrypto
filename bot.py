@@ -14,11 +14,10 @@ from telegram.ext import (
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, DateTime,
-    BigInteger, select, update, func
+    BigInteger, select, update, func, Numeric  # ← CHANGED HERE
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy.dialects.postgresql import DECIMAL
 
 load_dotenv()
 
@@ -52,12 +51,12 @@ async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False
 class User(Base):
     __tablename__ = 'users'
     id = Column(BigInteger, primary_key=True)
-    balance = Column(DECIMAL(15,2), default=0.0)
-    balance_in_process = Column(DECIMAL(15,2), default=0.0)
-    daily_profit = Column(DECIMAL(15,2), default=0.0)
-    total_profit = Column(DECIMAL(15,2), default=0.0)
+    balance = Column(Numeric(15,2), default=0.0)  # ← CHANGED
+    balance_in_process = Column(Numeric(15,2), default=0.0)  # ← CHANGED
+    daily_profit = Column(Numeric(15,2), default=0.0)  # ← CHANGED
+    total_profit = Column(Numeric(15,2), default=0.0)  # ← CHANGED
     referral_count = Column(Integer, default=0)
-    referral_earnings = Column(DECIMAL(15,2), default=0.0)
+    referral_earnings = Column(Numeric(15,2), default=0.0)  # ← CHANGED
     referrer_id = Column(BigInteger, nullable=True)
     wallet_address = Column(String)
     network = Column(String)
@@ -68,7 +67,7 @@ class Transaction(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger)
     type = Column(String)
-    amount = Column(DECIMAL(15,2))
+    amount = Column(Numeric(15,2))  # ← CHANGED
     status = Column(String)
     txid = Column(String)
     wallet = Column(String)
@@ -178,7 +177,7 @@ def main():
     scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     scheduler.start()
 
-    print("AiCrypto Bot STARTED – psycopg2-binary + Python 3.13")
+    print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
