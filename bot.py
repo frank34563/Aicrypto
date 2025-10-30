@@ -42,7 +42,7 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 
 if DATABASE_URL:
     if DATABASE_URL.startswith("postgres://"):
-        # Convert to psycopg format
+        # Use psycopg (NOT psycopg2!)
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
 else:
     DATABASE_URL = "sqlite+aiosqlite:///bot.db"
@@ -188,5 +188,6 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
 
