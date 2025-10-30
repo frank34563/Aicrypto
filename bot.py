@@ -6,18 +6,15 @@ from dotenv import load_dotenv
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from telegram import (
-    Update, ReplyKeyboardMarkup, InlineKeyboardMarkup,
-    InlineKeyboardButton
-)
+from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, filters, ContextTypes, ConversationHandler
+    filters, ContextTypes
 )
 
 from sqlalchemy import (
-    create_engine, Column, Integer, Float, String, DateTime,
-    BigInteger, select, update, func, text
+    create_engine, Column, Integer, String, DateTime,
+    BigInteger, select, update, func
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -28,10 +25,10 @@ load_dotenv()
 # === CONFIG ===
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN missing!")
+    raise ValueError("BOT_TOKEN not set!")
 
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
-MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbcDeF...')
+MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbc...')
 SUPPORT_USER = '@AiCrypto_Support1'
 DATABASE_URL = os.getenv('DATABASE_URL')
 
@@ -41,11 +38,15 @@ logger = logging.getLogger(__name__)
 # === DATABASE ===
 Base = declarative_base()
 
-# Fix for Railway: postgres:// → postgresql+psycopg://
+# Fix URL for psycopg2
 if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg2://", 1)
 
-engine = create_async_engine(DATABASE_URL or "sqlite+aiosqlite:///bot.db")
+engine = create_async_engine(
+    DATABASE_URL or "sqlite+aiosqlite:///bot.db",
+    echo=False,
+    future=True
+)
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 class User(Base):
@@ -90,7 +91,7 @@ async def get_user(session: AsyncSession, user_id: int) -> Dict:
         session.add(user)
         await session.commit()
         return await get_user(session, user_id)
-    return {col.name: getattr(user, col.name) for col in user.__table__.columns}
+    return {c.name: getattr(user, c.name) for c in user.__table__.columns}
 
 async def update_user(session: AsyncSession, user_id: int, **kwargs):
     await session.execute(update(User).where(User.id == user_id).values(**kwargs))
@@ -110,7 +111,7 @@ def main_menu():
         ['Referrals', 'Settings'], ['Information', 'Help']
     ], resize_keyboard=True)
 
-# === DAILY PROFIT ===
+# === DAILY PROFIT + REFERRALS ===
 async def daily_profit_job():
     async with async_session() as session:
         result = await session.execute(select(User))
@@ -124,7 +125,6 @@ async def daily_profit_job():
                 balance=float(user.balance or 0) + profit
             )
             await log_transaction(session, user_id=user.id, type='profit', amount=profit, status='credited')
-            # Referral bonus
             if user.referrer_id:
                 bonus = round(profit * 0.01, 2)
                 ref = await get_user(session, user.referrer_id)
@@ -132,7 +132,7 @@ async def daily_profit_job():
                     referral_earnings=ref['referral_earnings'] + bonus,
                     balance=ref['balance'] + bonus
                 )
-                await log_transaction(session, user_id=user.referrer_id, type='referral', amount=bonus, status='credited')
+                await log_transaction(session, user_id=user.referrer_id, type='referral_profit', amount=bonus, status='credited')
 
 # === HANDLERS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -161,6 +161,8 @@ In Process: {user['balance_in_process']:.2f}$
 Daily Profit: {user['daily_profit']:.2f}$
 Total Profit: {user['total_profit']:.2f}$
 Referral Earnings: {user['referral_earnings']:.2f}$
+
+Manager: {SUPPORT_USER}
         """.strip()
         await update.message.reply_text(msg)
 
@@ -170,14 +172,14 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance))
-    # Add other handlers...
+    # Add other handlers as needed...
 
     scheduler = AsyncIOScheduler()
     scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     scheduler.start()
 
-    print("AiCrypto Bot STARTED – psycopg[binary] + Python 3.13")
-    app.run_polling()
+    print("AiCrypto Bot STARTED – psycopg2-binary + Python 3.13")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
