@@ -1,4 +1,3 @@
-# Full file (patched): UI design upgrade — default to stacked, larger-looking inline buttons
 import os
 import logging
 from datetime import datetime
@@ -29,7 +28,13 @@ if not BOT_TOKEN:
 
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbc...')
-SUPPORT_USER = '@AiCrypto_Support1'
+SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
+# Optional explicit support URL (preferred). If not provided, we derive from SUPPORT_USER.
+SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else None)
+
+# Control whether menus are full-width stacked by default. Accepts "true"/"false" (case-insensitive).
+MENU_FULL_WIDTH = os.getenv('MENU_FULL_WIDTH', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
+
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 logging.basicConfig(level=logging.INFO)
@@ -77,14 +82,20 @@ class Transaction(Base):
     network = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-# Init DB helpers (unchanged resilient init from previous patch)
+# Init DB helpers and resilient init
 import asyncio, sys, time
+
 async def _create_all_with_timeout(engine_to_use):
     async with engine_to_use.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bool = True):
+    """
+    Initialize the DB with retries. If fallback_to_sqlite is True and remote DB unreachable,
+    switch to a local sqlite fallback so the bot can start in dev/testing environments.
+    """
     global engine, async_session, DATABASE_URL
+
     last_exc = None
     attempt = 0
     current_engine = engine
@@ -92,6 +103,7 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
     while attempt < retries:
         attempt += 1
         try:
+            # Attempt to create tables / connect
             await _create_all_with_timeout(current_engine)
             logger.info("Database initialized successfully.")
             return
@@ -144,14 +156,12 @@ async def log_transaction(session: AsyncSession, **data):
 # === STATES ===
 (AMOUNT, TX_PROOF, WITHDRAW_AMOUNT, WALLET_ADDR, NETWORK) = range(5)
 
-# === UI: upgraded inline menu (default: full-width stacked buttons like image 3) ===
-def build_inline_menu(full_width: bool = True) -> InlineKeyboardMarkup:
+# === MENUS ===
+def build_inline_menu(full_width: bool, support_url: str | None):
     """
-    Default layout: single full-width stacked buttons (visually similar to the screenshot).
-    If you want a compact grid, call build_inline_menu(full_width=False).
+    Build an InlineKeyboardMarkup. If support_url is provided, the Help button will open that URL.
     """
     if full_width:
-        # Put important actions first; use emojis to improve visual scanning
         rows = [
             [InlineKeyboardButton("💰 Balance", callback_data="menu_balance")],
             [InlineKeyboardButton("📈 Invest", callback_data="menu_invest")],
@@ -160,8 +170,12 @@ def build_inline_menu(full_width: bool = True) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("👥 Referrals", callback_data="menu_referrals")],
             [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
             [InlineKeyboardButton("ℹ️ Information", callback_data="menu_info")],
-            [InlineKeyboardButton("❓ Help", callback_data="menu_help")],
         ]
+        # Add Help as URL button if we have support_url
+        if support_url:
+            rows.append([InlineKeyboardButton("❓ Help", url=support_url)])
+        else:
+            rows.append([InlineKeyboardButton("❓ Help", callback_data="menu_help")])
     else:
         rows = [
             [InlineKeyboardButton("💰 Balance", callback_data="menu_balance"),
@@ -171,11 +185,11 @@ def build_inline_menu(full_width: bool = True) -> InlineKeyboardMarkup:
             [InlineKeyboardButton("👥 Referrals", callback_data="menu_referrals"),
              InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
             [InlineKeyboardButton("ℹ️ Info", callback_data="menu_info"),
-             InlineKeyboardButton("❓ Help", callback_data="menu_help")],
+             InlineKeyboardButton("❓ Help", url=support_url if support_url else "https://t.me/")],
         ]
     return InlineKeyboardMarkup(rows)
 
-# === DAILY PROFIT + REFERRALS === (unchanged)
+# === DAILY PROFIT + REFERRALS ===
 async def daily_profit_job():
     async with async_session() as session:
         result = await session.execute(select(User))
@@ -199,7 +213,7 @@ async def daily_profit_job():
                 )
                 await log_transaction(session, user_id=user.referrer_id, type='referral_profit', amount=bonus, status='credited')
 
-# === HANDLERS & upgraded balance text styling ===
+# === HANDLERS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     args = context.args
@@ -216,17 +230,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         else:
             await update.message.reply_text("Welcome to AiCrypto!")
-        # show the stacked inline menu by default
-        kb = build_inline_menu(full_width=True)
+
+        # Use the environment control to decide menu layout and pass support URL
+        kb = build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL)
         await update.message.reply_text("Choose:", reply_markup=kb)
 
 async def send_balance_message(query_or_message, session: AsyncSession, user_id: int):
-    """
-    Use HTML formatting for clearer UI: larger labels and emojis (Telegram uses client rendering).
-    When called from a CallbackQuery we edit the message; otherwise we send a new one.
-    """
     user = await get_user(session, user_id)
-    # HTML formatting: bold labels, newline spacing for readability
     msg = (
         f"💎 <b>Balance</b>\n"
         f"Your Balance: <b>{user['balance']:.2f}$</b>\n"
@@ -236,11 +246,9 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
         f"Your personal manager: <b>{SUPPORT_USER}</b>"
     )
     try:
-        # If query_or_message is a CallbackQuery, edit the originating message and display stacked menu below
-        await query_or_message.edit_message_text(msg, reply_markup=build_inline_menu(full_width=True), parse_mode="HTML")
+        await query_or_message.edit_message_text(msg, reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL), parse_mode="HTML")
     except Exception:
-        # Fallback to sending a new message
-        await query_or_message.reply_text(msg, reply_markup=build_inline_menu(full_width=True), parse_mode="HTML")
+        await query_or_message.reply_text(msg, reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL), parse_mode="HTML")
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -264,10 +272,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "menu_info":
             await query.edit_message_text("ℹ️ <b>Information</b>\nBot rules, plans, and FAQ.", parse_mode="HTML")
         elif data == "menu_help":
-            # Example: make Help open a URL or show contact — here we display contact info
+            # Fallback: if support URL not available and Help was created as callback, show contact
             await query.edit_message_text(f"❓ <b>Help</b>\nContact support: {SUPPORT_USER}", parse_mode="HTML")
         else:
-            await query.edit_message_text("Unknown action", reply_markup=build_inline_menu(full_width=True))
+            await query.edit_message_text("Unknown action", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
 
 # Keep a text handler fallback (for typed commands like "Balance")
 async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -293,7 +301,7 @@ def main():
     scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     scheduler.start()
 
-    print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13 (UI upgraded: stacked inline buttons)")
+    print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13 (UI env-controlled + Help URL)")
     try:
         app.run_polling(allowed_updates=Update.ALL_TYPES)
     finally:
