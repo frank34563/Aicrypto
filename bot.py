@@ -1,5 +1,5 @@
-# https://github.com/Princegluck/A/blob/main/bot.py
-# Full patched file: inline Confirm/Cancel for Invest/Withdraw + admin approval commands
+# Full patched file: keep menu always present; Exit returns to the main menu and cancels any active flow
+# permalink: https://github.com/Princegluck/A/blob/main/bot.py
 import os
 import logging
 from datetime import datetime
@@ -171,6 +171,10 @@ INVEST_AMOUNT, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_CONFIRM = range(4)
 
 # === MENUS ===
 def build_inline_menu(full_width: bool, support_url: Optional[str]):
+    """
+    Builds the inline menu. Adds an Exit button (callback_data 'menu_exit') to let the user go back to Main Menu.
+    """
+    exit_row = [InlineKeyboardButton("⨉ Exit", callback_data="menu_exit")]
     if full_width:
         rows = [
             [InlineKeyboardButton("💰 Balance", callback_data="menu_balance")],
@@ -185,6 +189,8 @@ def build_inline_menu(full_width: bool, support_url: Optional[str]):
             rows.append([InlineKeyboardButton("❓ Help", url=support_url)])
         else:
             rows.append([InlineKeyboardButton("❓ Help", callback_data="menu_help")])
+        # Add Exit as the final single-row button
+        rows.append(exit_row)
     else:
         rows = [
             [InlineKeyboardButton("💰 Balance", callback_data="menu_balance"),
@@ -195,6 +201,8 @@ def build_inline_menu(full_width: bool, support_url: Optional[str]):
              InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
             [InlineKeyboardButton("ℹ️ Information", callback_data="menu_info"),
              InlineKeyboardButton("❓ Help", url=support_url if support_url else "https://t.me/")],
+            # Exit button as a full-width row below the pairs for prominence:
+            exit_row,
         ]
     return InlineKeyboardMarkup(rows)
 
@@ -243,6 +251,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Welcome to AiCrypto!")
 
         kb = build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL)
+        # Send the main menu message so the menu is always present in chat
         await update.message.reply_text("Main Menu", reply_markup=kb)
 
 
@@ -266,7 +275,7 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
 def confirm_cancel_keyboard(prefix: str = "invest"):
     # prefix will be "invest" or "withdraw" so callback_data is unique
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Confirm", callback_data=f"{prefix}_confirm_yes") ,
+        [InlineKeyboardButton("✅ Confirm", callback_data=f"{prefix}_confirm_yes"),
          InlineKeyboardButton("❌ Cancel", callback_data=f"{prefix}_confirm_no")]
     ])
 
@@ -276,29 +285,40 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     await query.answer()
 
+    # Handle the Exit button: cancel any active conversation and show the Main Menu (menu stays present)
+    if data == "menu_exit":
+        # Cancel any active conversation for this user
+        await cancel_conv(update, context)
+        # Edit the originating message to show Main Menu and re-attach the main keyboard
+        try:
+            await query.message.edit_text("Main Menu", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+        except Exception:
+            # Fallback: send a new main menu message
+            await query.message.reply_text("Main Menu", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+        return
+
     if data == "menu_balance":
         async with async_session() as session:
             await send_balance_message(query, session, query.from_user.id)
     elif data == "menu_invest":
         # Start invest conversation via CallbackQuery entry point (ConversationHandler will catch this)
-        # Still prompt user here to enter amount
         await query.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.")
         return
     elif data == "menu_withdraw":
         await query.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
         return
     elif data == "menu_history":
-        await query.edit_message_text("🧾 <b>History</b>\nYour operations history (coming soon).", parse_mode="HTML")
+        await query.edit_message_text("🧾 <b>History</b>\nYour operations history (coming soon).", parse_mode="HTML", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
     elif data == "menu_referrals":
         async with async_session() as session:
             ref = await get_user(session, query.from_user.id)
-            await query.edit_message_text(f"👥 <b>Referrals</b>\nCount: {ref['referral_count']}\nEarnings: {ref['referral_earnings']:.2f}$", parse_mode="HTML")
+            await query.edit_message_text(f"👥 <b>Referrals</b>\nCount: {ref['referral_count']}\nEarnings: {ref['referral_earnings']:.2f}$", parse_mode="HTML", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
     elif data == "menu_settings":
-        await query.edit_message_text("⚙️ <b>Settings</b>\nProfile, wallet address, network.", parse_mode="HTML")
+        await query.edit_message_text("⚙️ <b>Settings</b>\nProfile, wallet address, network.", parse_mode="HTML", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
     elif data == "menu_info":
-        await query.edit_message_text("ℹ️ <b>Information</b>\nBot rules, plans, and FAQ.", parse_mode="HTML")
+        await query.edit_message_text("ℹ️ <b>Information</b>\nBot rules, plans, and FAQ.", parse_mode="HTML", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
     elif data == "menu_help":
-        await query.edit_message_text(f"❓ <b>Help</b>\nContact support: {SUPPORT_USER}", parse_mode="HTML")
+        await query.edit_message_text(f"❓ <b>Help</b>\nContact support: {SUPPORT_USER}", parse_mode="HTML", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
     else:
         await query.edit_message_text("Unknown action", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
 
@@ -378,6 +398,11 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     else:
         await query.message.reply_text("Investment cancelled.")
         context.user_data.pop('pending_invest_amount', None)
+    # Keep the menu present by sending/editing the main menu
+    try:
+        await query.message.reply_text("Main Menu", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+    except Exception:
+        pass
     return ConversationHandler.END
 
 
@@ -408,6 +433,11 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
     else:
         await query.message.reply_text("Withdrawal cancelled.")
         context.user_data.pop('pending_withdraw_amount', None)
+    # Show main menu again
+    try:
+        await query.message.reply_text("Main Menu", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+    except Exception:
+        pass
     return ConversationHandler.END
 
 
@@ -415,11 +445,15 @@ async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('pending_invest_amount', None)
     context.user_data.pop('pending_withdraw_amount', None)
     # edit or reply
-    if update.callback_query:
+    if update and getattr(update, "callback_query", None):
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text("Operation cancelled.")
-    else:
-        await update.message.reply_text("Operation cancelled.")
+        # do not clutter the chat; edit original message if possible to show Main Menu again
+        try:
+            await update.callback_query.message.edit_text("Main Menu", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+        except Exception:
+            await update.callback_query.message.reply_text("Main Menu", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+    elif update and getattr(update, "message", None):
+        await update.message.reply_text("Main Menu", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
     return ConversationHandler.END
 
 
@@ -571,7 +605,7 @@ def main():
     scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     scheduler.start()
 
-    print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13 (Confirm buttons + admin commands)")
+    print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13 (Confirm buttons + admin commands + Exit)")
     try:
         app.run_polling(allowed_updates=Update.ALL_TYPES)
     finally:
