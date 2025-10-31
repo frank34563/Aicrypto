@@ -1,8 +1,9 @@
-# Full updated bot.py — ConversationHandler now accepts CallbackQuery entry_points for Invest/Withdraw
+# https://github.com/Princegluck/A/blob/main/bot.py
+# Full patched file: inline Confirm/Cancel for Invest/Withdraw + admin approval commands
 import os
 import logging
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional
 from dotenv import load_dotenv
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -42,7 +43,6 @@ SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
 SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else None)
 
 # MENU_FULL_WIDTH controls stacked full-width layout when true.
-# For paired two-column menu layout set MENU_FULL_WIDTH=false (this file defaults to pairs)
 MENU_FULL_WIDTH = os.getenv('MENU_FULL_WIDTH', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -66,31 +66,34 @@ else:
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
+
 class User(Base):
     __tablename__ = 'users'
     id = Column(BigInteger, primary_key=True)
-    balance = Column(Numeric(15,2), default=0.0)
-    balance_in_process = Column(Numeric(15,2), default=0.0)
-    daily_profit = Column(Numeric(15,2), default=0.0)
-    total_profit = Column(Numeric(15,2), default=0.0)
+    balance = Column(Numeric(15, 2), default=0.0)
+    balance_in_process = Column(Numeric(15, 2), default=0.0)
+    daily_profit = Column(Numeric(15, 2), default=0.0)
+    total_profit = Column(Numeric(15, 2), default=0.0)
     referral_count = Column(Integer, default=0)
-    referral_earnings = Column(Numeric(15,2), default=0.0)
+    referral_earnings = Column(Numeric(15, 2), default=0.0)
     referrer_id = Column(BigInteger, nullable=True)
     wallet_address = Column(String)
     network = Column(String)
     joined_at = Column(DateTime, default=datetime.utcnow)
+
 
 class Transaction(Base):
     __tablename__ = 'transactions'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger)
     type = Column(String)
-    amount = Column(Numeric(15,2))
+    amount = Column(Numeric(15, 2))
     status = Column(String)
     txid = Column(String)
     wallet = Column(String)
     network = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
+
 
 # Init DB helpers and resilient init
 import asyncio, sys, time
@@ -139,6 +142,7 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
     await asyncio.sleep(0.1)
     sys.exit(1)
 
+
 # === HELPERS ===
 async def get_user(session: AsyncSession, user_id: int) -> Dict:
     result = await session.execute(select(User).where(User.id == user_id))
@@ -150,19 +154,23 @@ async def get_user(session: AsyncSession, user_id: int) -> Dict:
         return await get_user(session, user_id)
     return {c.name: getattr(user, c.name) for c in user.__table__.columns}
 
+
 async def update_user(session: AsyncSession, user_id: int, **kwargs):
     await session.execute(update(User).where(User.id == user_id).values(**kwargs))
     await session.commit()
+
 
 async def log_transaction(session: AsyncSession, **data):
     session.add(Transaction(**data))
     await session.commit()
 
+
 # === STATES for ConversationHandler ===
 INVEST_AMOUNT, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_CONFIRM = range(4)
 
+
 # === MENUS ===
-def build_inline_menu(full_width: bool, support_url: str | None):
+def build_inline_menu(full_width: bool, support_url: Optional[str]):
     if full_width:
         rows = [
             [InlineKeyboardButton("💰 Balance", callback_data="menu_balance")],
@@ -190,6 +198,7 @@ def build_inline_menu(full_width: bool, support_url: str | None):
         ]
     return InlineKeyboardMarkup(rows)
 
+
 # === DAILY PROFIT + REFERRALS ===
 async def daily_profit_job():
     async with async_session() as session:
@@ -200,19 +209,20 @@ async def daily_profit_job():
                 continue
             profit = round(total * 0.015, 2)
             await update_user(session, user.id,
-                daily_profit=profit,
-                total_profit=float(user.total_profit or 0) + profit,
-                balance=float(user.balance or 0) + profit
-            )
+                              daily_profit=profit,
+                              total_profit=float(user.total_profit or 0) + profit,
+                              balance=float(user.balance or 0) + profit
+                              )
             await log_transaction(session, user_id=user.id, type='profit', amount=profit, status='credited')
             if user.referrer_id:
                 bonus = round(profit * 0.01, 2)
                 ref = await get_user(session, user.referrer_id)
                 await update_user(session, user.referrer_id,
-                    referral_earnings=ref['referral_earnings'] + bonus,
-                    balance=ref['balance'] + bonus
-                )
+                                  referral_earnings=ref['referral_earnings'] + bonus,
+                                  balance=ref['balance'] + bonus
+                                  )
                 await log_transaction(session, user_id=user.referrer_id, type='referral_profit', amount=bonus, status='credited')
+
 
 # === HANDLERS & Conversation flows ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -235,6 +245,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL)
         await update.message.reply_text("Main Menu", reply_markup=kb)
 
+
 async def send_balance_message(query_or_message, session: AsyncSession, user_id: int):
     user = await get_user(session, user_id)
     msg = (
@@ -250,6 +261,16 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
     except Exception:
         await query_or_message.reply_text(msg, reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL), parse_mode="HTML")
 
+
+# --- CONFIRM/CANCEL button builders ---
+def confirm_cancel_keyboard(prefix: str = "invest"):
+    # prefix will be "invest" or "withdraw" so callback_data is unique
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Confirm", callback_data=f"{prefix}_confirm_yes") ,
+         InlineKeyboardButton("❌ Cancel", callback_data=f"{prefix}_confirm_no")]
+    ])
+
+
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
@@ -259,9 +280,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with async_session() as session:
             await send_balance_message(query, session, query.from_user.id)
     elif data == "menu_invest":
-        # Start invest conversation by delegating to ConversationHandler entry point via CallbackQueryHandler
-        # ConversationHandler entry_points will handle starting the flow; return nothing here when used as standalone callback
-        # We still send prompt so user knows to enter amount
+        # Start invest conversation via CallbackQuery entry point (ConversationHandler will catch this)
+        # Still prompt user here to enter amount
         await query.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.")
         return
     elif data == "menu_withdraw":
@@ -282,14 +302,17 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await query.edit_message_text("Unknown action", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
 
+
 # Conversation entry points invoked when user types an amount after pressing Invest/Withdraw
 async def start_invest_from_message(query_or_update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('pending_invest_amount', None)
     return INVEST_AMOUNT
 
+
 async def start_withdraw_from_message(query_or_update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('pending_withdraw_amount', None)
     return WITHDRAW_AMOUNT
+
 
 # Invest flow: capture amount
 async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -303,29 +326,14 @@ async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_T
         return INVEST_AMOUNT
 
     context.user_data['pending_invest_amount'] = round(amount, 2)
-    await update.message.reply_text(f"You entered <b>{context.user_data['pending_invest_amount']:.2f}$</b> to invest. Confirm? (Yes/No)", parse_mode="HTML")
+    # Send confirm/cancel inline buttons
+    await update.message.reply_text(
+        f"You entered <b>{context.user_data['pending_invest_amount']:.2f}$</b> to invest.",
+        parse_mode="HTML",
+        reply_markup=confirm_cancel_keyboard(prefix="invest")
+    )
     return INVEST_CONFIRM
 
-async def invest_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip().lower()
-    if text in ('yes', 'y', 'confirm', 'ok'):
-        amount = context.user_data.get('pending_invest_amount')
-        if amount is None:
-            await update.message.reply_text("No pending amount found. Start again with Invest from the menu.")
-            return ConversationHandler.END
-        async with async_session() as session:
-            user_id = update.effective_user.id
-            user = await get_user(session, user_id)
-            new_in_process = float(user['balance_in_process'] or 0) + float(amount)
-            await update_user(session, user_id, balance_in_process=new_in_process)
-            await log_transaction(session, user_id=user_id, type='invest', amount=amount, status='in_process')
-        await update.message.reply_text(f"✅ Investment for {amount:.2f}$ recorded and is in process. Manager: {SUPPORT_USER}")
-        context.user_data.pop('pending_invest_amount', None)
-        return ConversationHandler.END
-    else:
-        await update.message.reply_text("Investment cancelled.")
-        context.user_data.pop('pending_invest_amount', None)
-        return ConversationHandler.END
 
 # Withdraw flow: capture amount
 async def withdraw_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -339,45 +347,175 @@ async def withdraw_amount_received(update: Update, context: ContextTypes.DEFAULT
         return WITHDRAW_AMOUNT
 
     context.user_data['pending_withdraw_amount'] = round(amount, 2)
-    await update.message.reply_text(f"You requested withdrawal of <b>{context.user_data['pending_withdraw_amount']:.2f}$</b>. Confirm? (Yes/No)", parse_mode="HTML")
+    await update.message.reply_text(
+        f"You requested withdrawal of <b>{context.user_data['pending_withdraw_amount']:.2f}$</b>.",
+        parse_mode="HTML",
+        reply_markup=confirm_cancel_keyboard(prefix="withdraw")
+    )
     return WITHDRAW_CONFIRM
 
-async def withdraw_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip().lower()
-    if text in ('yes', 'y', 'confirm', 'ok'):
-        amount = context.user_data.get('pending_withdraw_amount')
+
+# Callback handlers for confirm/cancel inline buttons
+async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    await query.answer()
+    if data == "invest_confirm_yes":
+        amount = context.user_data.get('pending_invest_amount')
         if amount is None:
-            await update.message.reply_text("No pending withdrawal found. Start again with Withdraw from the menu.")
+            await query.message.reply_text("No pending amount found. Start again with Invest from the menu.")
             return ConversationHandler.END
         async with async_session() as session:
-            user_id = update.effective_user.id
+            user_id = query.from_user.id
+            user = await get_user(session, user_id)
+            new_in_process = float(user['balance_in_process'] or 0) + float(amount)
+            await update_user(session, user_id, balance_in_process=new_in_process)
+            tx = Transaction(user_id=user_id, type='invest', amount=amount, status='in_process', created_at=datetime.utcnow())
+            session.add(tx)
+            await session.commit()
+        await query.message.reply_text(f"✅ Investment for {amount:.2f}$ recorded and is in process. Transaction id: {tx.id}\nManager: {SUPPORT_USER}")
+        context.user_data.pop('pending_invest_amount', None)
+    else:
+        await query.message.reply_text("Investment cancelled.")
+        context.user_data.pop('pending_invest_amount', None)
+    return ConversationHandler.END
+
+
+async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    data = query.data
+    await query.answer()
+    if data == "withdraw_confirm_yes":
+        amount = context.user_data.get('pending_withdraw_amount')
+        if amount is None:
+            await query.message.reply_text("No pending withdrawal found. Start again with Withdraw from the menu.")
+            return ConversationHandler.END
+        async with async_session() as session:
+            user_id = query.from_user.id
             user = await get_user(session, user_id)
             balance = float(user['balance'] or 0)
             if amount > balance:
-                await update.message.reply_text(f"Insufficient balance. Your available balance is {balance:.2f}$. Withdrawal aborted.")
+                await query.message.reply_text(f"Insufficient balance. Your available balance is {balance:.2f}$. Withdrawal aborted.")
                 context.user_data.pop('pending_withdraw_amount', None)
                 return ConversationHandler.END
             new_balance = balance - amount
             await update_user(session, user_id, balance=new_balance, balance_in_process=float(user['balance_in_process'] or 0) + amount)
-            await log_transaction(session, user_id=user_id, type='withdraw', amount=amount, status='requested')
-        await update.message.reply_text(f"✅ Withdrawal request for {amount:.2f}$ submitted. Manager: {SUPPORT_USER}")
+            tx = Transaction(user_id=user_id, type='withdraw', amount=amount, status='requested', created_at=datetime.utcnow())
+            session.add(tx)
+            await session.commit()
+        await query.message.reply_text(f"✅ Withdrawal request for {amount:.2f}$ submitted. Transaction id: {tx.id}\nManager: {SUPPORT_USER}")
         context.user_data.pop('pending_withdraw_amount', None)
-        return ConversationHandler.END
     else:
-        await update.message.reply_text("Withdrawal cancelled.")
+        await query.message.reply_text("Withdrawal cancelled.")
         context.user_data.pop('pending_withdraw_amount', None)
-        return ConversationHandler.END
+    return ConversationHandler.END
+
 
 async def cancel_conv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('pending_invest_amount', None)
     context.user_data.pop('pending_withdraw_amount', None)
-    await update.message.reply_text("Operation cancelled.")
+    # edit or reply
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text("Operation cancelled.")
+    else:
+        await update.message.reply_text("Operation cancelled.")
     return ConversationHandler.END
+
+
+# ADMIN COMMANDS
+def _is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID and ADMIN_ID != 0
+
+
+async def admin_approve_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Usage: /approve_withdraw <tx_id>
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.message.reply_text("Forbidden: admin only.")
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: /approve_withdraw <transaction_id>")
+        return
+    try:
+        tx_id = int(args[0])
+    except Exception:
+        await update.message.reply_text("Invalid transaction id.")
+        return
+
+    async with async_session() as session:
+        result = await session.execute(select(Transaction).where(Transaction.id == tx_id))
+        tx = result.scalar_one_or_none()
+        if not tx:
+            await update.message.reply_text("Transaction not found.")
+            return
+        if tx.type != 'withdraw':
+            await update.message.reply_text("Transaction is not a withdrawal.")
+            return
+        if tx.status == 'completed':
+            await update.message.reply_text("Transaction already completed.")
+            return
+        # Mark withdraw completed: reduce balance_in_process and (already deducted from balance earlier)
+        # In our flow, when withdraw requested we moved amount from balance -> balance_in_process.
+        user = await get_user(session, tx.user_id)
+        new_in_process = float(user['balance_in_process'] or 0) - float(tx.amount or 0)
+        if new_in_process < 0:
+            new_in_process = 0
+        await update_user(session, tx.user_id, balance_in_process=new_in_process)
+        # update transaction status
+        await session.execute(update(Transaction).where(Transaction.id == tx_id).values(status='completed'))
+        await session.commit()
+    await update.message.reply_text(f"Withdrawal transaction {tx_id} marked as completed.")
+
+
+async def admin_credit_invest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Usage: /credit_invest <tx_id>
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.message.reply_text("Forbidden: admin only.")
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: /credit_invest <transaction_id>")
+        return
+    try:
+        tx_id = int(args[0])
+    except Exception:
+        await update.message.reply_text("Invalid transaction id.")
+        return
+
+    async with async_session() as session:
+        result = await session.execute(select(Transaction).where(Transaction.id == tx_id))
+        tx = result.scalar_one_or_none()
+        if not tx:
+            await update.message.reply_text("Transaction not found.")
+            return
+        if tx.type != 'invest':
+            await update.message.reply_text("Transaction is not an invest.")
+            return
+        if tx.status == 'credited':
+            await update.message.reply_text("Transaction already credited.")
+            return
+        # Move amount from balance_in_process -> balance and mark credited
+        user = await get_user(session, tx.user_id)
+        balance = float(user['balance'] or 0)
+        in_process = float(user['balance_in_process'] or 0)
+        amount = float(tx.amount or 0)
+        new_in_process = max(0.0, in_process - amount)
+        new_balance = balance + amount
+        await update_user(session, tx.user_id, balance=new_balance, balance_in_process=new_in_process,
+                          total_profit=float(user['total_profit'] or 0))  # total_profit unchanged here
+        await session.execute(update(Transaction).where(Transaction.id == tx_id).values(status='credited'))
+        await session.commit()
+    await update.message.reply_text(f"Investment transaction {tx_id} marked as credited and balance updated.")
+
 
 # Fallback text handler for typed "Balance"
 async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
         await send_balance_message(update.message, session, update.effective_user.id)
+
 
 # === MAIN ===
 def main():
@@ -395,20 +533,32 @@ def main():
         ],
         states={
             INVEST_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, invest_amount_received)],
-            INVEST_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, invest_confirm)],
+            INVEST_CONFIRM: [
+                # accept confirm via callback buttons
+                CallbackQueryHandler(invest_confirm_callback, pattern='^invest_confirm_yes$'),
+                CallbackQueryHandler(invest_confirm_callback, pattern='^invest_confirm_no$'),
+            ],
             WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_amount_received)],
-            WITHDRAW_CONFIRM: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_confirm)],
+            WITHDRAW_CONFIRM: [
+                CallbackQueryHandler(withdraw_confirm_callback, pattern='^withdraw_confirm_yes$'),
+                CallbackQueryHandler(withdraw_confirm_callback, pattern='^withdraw_confirm_no$'),
+            ],
         },
         fallbacks=[CommandHandler('cancel', cancel_conv)],
         allow_reentry=True,
     )
 
     app.add_handler(CommandHandler("start", start))
+    # menu callback must be registered so general menu clicks still work
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(conv_handler)
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
-    # Also allow users to type /invest and /withdraw to start flows directly (these handlers return states)
+    # Admin handlers
+    app.add_handler(CommandHandler("approve_withdraw", admin_approve_withdraw))
+    app.add_handler(CommandHandler("credit_invest", admin_credit_invest))
+
+    # Also allow users to type /invest and /withdraw to start flows directly
     app.add_handler(CommandHandler("invest", invest_cmd_handler))
     app.add_handler(CommandHandler("withdraw", withdraw_cmd_handler))
 
@@ -423,7 +573,7 @@ def main():
     scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     scheduler.start()
 
-    print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13 (paired menu layout + invest/withdraw flows)")
+    print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13 (Confirm buttons + admin commands)")
     try:
         app.run_polling(allowed_updates=Update.ALL_TYPES)
     finally:
@@ -437,30 +587,32 @@ def main():
         except Exception:
             pass
 
+
 # Helpers to start conversation from commands (since ConversationHandler's entry_points require callables)
 async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.")
     return INVEST_AMOUNT
 
+
 async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
     return WITHDRAW_AMOUNT
 
+
 # Functions used as CallbackQueryHandler entry_points
 async def invest_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Called when CallbackQuery with data 'menu_invest' matches the pattern.
-    # The incoming Update is a CallbackQuery-type update. We should answer and prompt user to send amount in chat.
     if update.callback_query:
         await update.callback_query.answer()
-        # reply to the message or send a new one in chat
         await update.callback_query.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.")
     return INVEST_AMOUNT
+
 
 async def withdraw_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
     return WITHDRAW_AMOUNT
+
 
 if __name__ == '__main__':
     try:
