@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 Base = declarative_base()
 
 # === FORCE psycopg DRIVER ===
+# Read DATABASE_URL from env and normalize to SQLAlchemy + psycopg driver
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 if DATABASE_URL:
@@ -85,14 +86,25 @@ class Transaction(Base):
     network = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-# Init DB
+# Init DB helpers and resilient init
 import asyncio
-async def _create_all_with_timeout(engine, timeout=10):
-    async with engine.begin() as conn:
+import sys
+import time
+
+async def _create_all_with_timeout(engine_to_use):
+    """
+    Run metadata.create_all using the provided async engine.
+    """
+    async with engine_to_use.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-
 async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bool = True):
+    """
+    Initialize the database with retries and optional sqlite fallback.
+    The global declaration must appear before any use/assignment of the global names.
+    """
+    global engine, async_session, DATABASE_URL
+
     last_exc = None
     attempt = 0
     current_engine = engine
@@ -116,8 +128,8 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
         try:
             sqlite_url = "sqlite+aiosqlite:///bot_fallback.db"
             logger.warning("Falling back to sqlite DB at %s for local/dev (NOT recommended for production).", sqlite_url)
+            # Recreate engine/session objects to use sqlite
             from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
-            global engine, async_session, DATABASE_URL
             DATABASE_URL = sqlite_url
             engine = _create_async_engine(DATABASE_URL, echo=False, future=True)
             async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -128,8 +140,8 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
             logger.exception("Fallback to sqlite failed: %s", e2)
 
     logger.critical("Unable to initialize database and fallback failed — exiting.")
+    # Ensure we flush logs and exit with non-zero code so the container platform sees failure
     await asyncio.sleep(0.1)
-    import sys
     sys.exit(1)
 
 # === HELPERS ===
@@ -156,6 +168,7 @@ async def log_transaction(session: AsyncSession, **data):
 
 # === MENUS ===
 def build_inline_menu(full_width: bool = False) -> InlineKeyboardMarkup:
+    # full_width=True => single-button rows (stacked)
     if full_width:
         rows = [
             [InlineKeyboardButton("Balance", callback_data="menu_balance")],
@@ -186,7 +199,8 @@ async def daily_profit_job():
         result = await session.execute(select(User))
         for user in result.scalars():
             total = float(user.balance or 0) + float(user.balance_in_process or 0)
-            if total <= 0: continue
+            if total <= 0:
+                continue
             profit = round(total * 0.015, 2)
             await update_user(session, user.id,
                 daily_profit=profit,
@@ -201,7 +215,7 @@ async def daily_profit_job():
                     referral_earnings=ref['referral_earnings'] + bonus,
                     balance=ref['balance'] + bonus
                 )
-                await log_transaction(session, user.referrer_id, type='referral_profit', amount=bonus, status='credited')
+                await log_transaction(session, user_id=user.referrer_id, type='referral_profit', amount=bonus, status='credited')
 
 # === HANDLERS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -220,6 +234,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         else:
             await update.message.reply_text("Welcome to AiCrypto!")
+        # send an inline keyboard instead of the reply keyboard
         kb = build_inline_menu(full_width=False)
         await update.message.reply_text("Choose:", reply_markup=kb)
 
@@ -234,15 +249,19 @@ Referral Earnings: {user['referral_earnings']:.2f}$
 
 Manager: {SUPPORT_USER}
     """.strip()
+    # query_or_message can be a CallbackQuery or Message; handle accordingly
     try:
+        # if CallbackQuery: edit original message and show stacked menu
         await query_or_message.edit_message_text(msg, reply_markup=build_inline_menu(full_width=True))
     except Exception:
+        # otherwise send a new message
         await query_or_message.reply_text(msg, reply_markup=build_inline_menu(full_width=True))
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Handles callback queries for the inline menu
     query = update.callback_query
     data = query.data
-    await query.answer()
+    await query.answer()  # stop loading spinner on client
 
     async with async_session() as session:
         if data == "menu_balance":
@@ -276,6 +295,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(menu_callback))
+    # Keep a message handler so typing "Balance" still works for users
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
     # Add other handlers as needed...
 
@@ -297,6 +317,7 @@ def main():
     try:
         app.run_polling(allowed_updates=Update.ALL_TYPES)
     finally:
+        # Ensure clean shutdown if termination occurs
         try:
             scheduler.shutdown(wait=False)
         except Exception:
@@ -312,6 +333,7 @@ if __name__ == '__main__':
     try:
         asyncio.run(init_db(retries=5, backoff=2.0, fallback_to_sqlite=True))
     except SystemExit:
+        # allow explicit sys.exit(1) to propagate after logging
         raise
     except Exception as e:
         logger.exception("Unexpected error during DB initialization: %s", e)
