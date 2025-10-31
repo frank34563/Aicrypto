@@ -1,4 +1,4 @@
-# Full patched file: paired menu layout + Help URL + Invest/Withdraw ConversationHandler flows
+# Full updated bot.py — ConversationHandler now accepts CallbackQuery entry_points for Invest/Withdraw
 import os
 import logging
 from datetime import datetime
@@ -259,13 +259,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with async_session() as session:
             await send_balance_message(query, session, query.from_user.id)
     elif data == "menu_invest":
-        # Start invest conversation: ask for amount
-        await query.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50):")
-        return await start_invest_from_message(query, context)
+        # Start invest conversation by delegating to ConversationHandler entry point via CallbackQueryHandler
+        # ConversationHandler entry_points will handle starting the flow; return nothing here when used as standalone callback
+        # We still send prompt so user knows to enter amount
+        await query.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.")
+        return
     elif data == "menu_withdraw":
-        # Start withdraw conversation: ask for amount
-        await query.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00):")
-        return await start_withdraw_from_message(query, context)
+        await query.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
+        return
     elif data == "menu_history":
         await query.edit_message_text("🧾 <b>History</b>\nYour operations history (coming soon).", parse_mode="HTML")
     elif data == "menu_referrals":
@@ -283,8 +284,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Conversation entry points invoked when user types an amount after pressing Invest/Withdraw
 async def start_invest_from_message(query_or_update, context: ContextTypes.DEFAULT_TYPE):
-    # This helper sets up context for invest flow and returns the INVEST_AMOUNT state.
-    # When starts from a CallbackQuery we need to return state to ConversationHandler flow manually.
     context.user_data.pop('pending_invest_amount', None)
     return INVEST_AMOUNT
 
@@ -314,7 +313,6 @@ async def invest_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if amount is None:
             await update.message.reply_text("No pending amount found. Start again with Invest from the menu.")
             return ConversationHandler.END
-        # Process the invest: add to balance_in_process and log transaction
         async with async_session() as session:
             user_id = update.effective_user.id
             user = await get_user(session, user_id)
@@ -359,7 +357,6 @@ async def withdraw_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(f"Insufficient balance. Your available balance is {balance:.2f}$. Withdrawal aborted.")
                 context.user_data.pop('pending_withdraw_amount', None)
                 return ConversationHandler.END
-            # Deduct from balance and log a pending withdrawal transaction
             new_balance = balance - amount
             await update_user(session, user_id, balance=new_balance, balance_in_process=float(user['balance_in_process'] or 0) + amount)
             await log_transaction(session, user_id=user_id, type='withdraw', amount=amount, status='requested')
@@ -389,9 +386,12 @@ def main():
     # ConversationHandler for Invest & Withdraw
     conv_handler = ConversationHandler(
         entry_points=[
-            # We let callback handler start flows by returning states; also allow direct /invest or /withdraw commands
-            CommandHandler('invest', lambda u,c: invest_start_cmd(u, c)),
-            CommandHandler('withdraw', lambda u,c: withdraw_start_cmd(u, c)),
+            # Start via command
+            CommandHandler('invest', invest_cmd_handler),
+            CommandHandler('withdraw', withdraw_cmd_handler),
+            # Start via inline menu callbacks
+            CallbackQueryHandler(invest_start_cmd, pattern='^menu_invest$'),
+            CallbackQueryHandler(withdraw_start_cmd, pattern='^menu_withdraw$'),
         ],
         states={
             INVEST_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, invest_amount_received)],
@@ -403,13 +403,12 @@ def main():
         allow_reentry=True,
     )
 
-    # We need the conversation entry helper functions to start when /invest or /withdraw used
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(conv_handler)
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
-    # Also allow users to type /invest and /withdraw to start flows
+    # Also allow users to type /invest and /withdraw to start flows directly (these handlers return states)
     app.add_handler(CommandHandler("invest", invest_cmd_handler))
     app.add_handler(CommandHandler("withdraw", withdraw_cmd_handler))
 
@@ -447,16 +446,20 @@ async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
     return WITHDRAW_AMOUNT
 
-# Functions used when starting flow from CallbackQuery: they return the first state value so menu_callback can exit appropriately.
-async def invest_start_cmd(update_or_query, context: ContextTypes.DEFAULT_TYPE):
-    # If called as command handler, update_or_query is Update; we simply prompt then return the next state.
-    if isinstance(update_or_query, Update) and update_or_query.message:
-        await update_or_query.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.")
+# Functions used as CallbackQueryHandler entry_points
+async def invest_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Called when CallbackQuery with data 'menu_invest' matches the pattern.
+    # The incoming Update is a CallbackQuery-type update. We should answer and prompt user to send amount in chat.
+    if update.callback_query:
+        await update.callback_query.answer()
+        # reply to the message or send a new one in chat
+        await update.callback_query.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.")
     return INVEST_AMOUNT
 
-async def withdraw_start_cmd(update_or_query, context: ContextTypes.DEFAULT_TYPE):
-    if isinstance(update_or_query, Update) and update_or_query.message:
-        await update_or_query.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
+async def withdraw_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
     return WITHDRAW_AMOUNT
 
 if __name__ == '__main__':
