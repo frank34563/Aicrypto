@@ -14,7 +14,7 @@ from telegram.ext import (
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, DateTime,
-    BigInteger, select, update, func, Numeric  # ← CHANGED HERE
+    BigInteger, select, update, func, Numeric  # 
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -65,12 +65,12 @@ async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False
 class User(Base):
     __tablename__ = 'users'
     id = Column(BigInteger, primary_key=True)
-    balance = Column(Numeric(15,2), default=0.0)  # ← CHANGED
-    balance_in_process = Column(Numeric(15,2), default=0.0)  # ← CHANGED
-    daily_profit = Column(Numeric(15,2), default=0.0)  # ← CHANGED
-    total_profit = Column(Numeric(15,2), default=0.0)  # ← CHANGED
+    balance = Column(Numeric(15,2), default=0.0)
+    balance_in_process = Column(Numeric(15,2), default=0.0)
+    daily_profit = Column(Numeric(15,2), default=0.0)
+    total_profit = Column(Numeric(15,2), default=0.0)
     referral_count = Column(Integer, default=0)
-    referral_earnings = Column(Numeric(15,2), default=0.0)  # ← CHANGED
+    referral_earnings = Column(Numeric(15,2), default=0.0)
     referrer_id = Column(BigInteger, nullable=True)
     wallet_address = Column(String)
     network = Column(String)
@@ -81,7 +81,7 @@ class Transaction(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger)
     type = Column(String)
-    amount = Column(Numeric(15,2))  # ← CHANGED
+    amount = Column(Numeric(15,2))
     status = Column(String)
     txid = Column(String)
     wallet = Column(String)
