@@ -1,8 +1,5 @@
-# Full patched bot.py — includes ensure_columns() and calls it from init_db
-# - Persistent menu, invest/withdraw flows, admin approve/reject, /pending command
-# - ensure_columns() runs safe ALTER TABLE IF NOT EXISTS for nullable columns (wallet_network)
-# Paste this file into bot.py and deploy.
-
+# Full patched bot.py — fixes handler ordering so ConversationHandler entry_points for menu buttons run
+# Includes ensure_columns() and previously added features (persistent menu, invest/withdraw flows, admin approve/reject, /pending)
 import os
 import logging
 from datetime import datetime
@@ -105,19 +102,15 @@ async def ensure_columns():
     """
     Ensure nullable columns that may be missing on older schemas exist.
     Safe to run at startup; uses ALTER TABLE ... ADD COLUMN IF NOT EXISTS for idempotence.
-    Add additional columns here as your models evolve.
     """
     async with engine.begin() as conn:
         # Add wallet_network to users table if missing (nullable)
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_network VARCHAR"))
-        # Add any other safe nullable columns here as needed:
-        # await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS metadata JSONB"))
+        # Add others if needed in future
 
 async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bool = True):
     """
     Initialize the database with retries and optional sqlite fallback.
-    This init_db attempts to create tables and then runs ensure_columns() to add
-    safe nullable columns that might be missing on older schemas.
     """
     global engine, async_session, DATABASE_URL
 
@@ -128,16 +121,11 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
     while attempt < retries:
         attempt += 1
         try:
-            # attempt to create tables (no-op if already created)
             await _create_all_with_timeout(current_engine)
-
-            # Ensure schema has expected nullable columns (idempotent)
             try:
                 await ensure_columns()
             except Exception as col_exc:
-                # Log but don't treat as fatal here — allow fallback to sqlite if needed afterwards
-                logger.warning("ensure_columns() returned error: %s", col_exc)
-
+                logger.warning("ensure_columns error: %s", col_exc)
             logger.info("Database initialized successfully.")
             return
         except Exception as e:
@@ -158,13 +146,10 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
             engine = _create_async_engine(DATABASE_URL, echo=False, future=True)
             async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
             await _create_all_with_timeout(engine)
-
-            # Ensure columns in sqlite fallback as well (idempotent)
             try:
                 await ensure_columns()
             except Exception as col_exc:
-                logger.warning("ensure_columns() failed on sqlite fallback: %s", col_exc)
-
+                logger.warning("ensure_columns failed on sqlite fallback: %s", col_exc)
             logger.info("Fallback sqlite database initialized. Bot will continue using sqlite.")
             return
         except Exception as e2:
@@ -260,6 +245,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data if query else None
     if query:
         await query.answer()
+
+    # Defensive: if this callback is one of the conversation entry callbacks, do nothing here
+    # (the ConversationHandler's CallbackQueryHandler will receive it because it's registered earlier).
+    if data in ("menu_invest", "menu_withdraw") or (data and data.startswith("admin_")):
+        logger.debug("menu_callback ignoring callback '%s' to allow specific handler to run", data)
+        return
+
     if data == "menu_exit":
         await cancel_conv(update, context)
         try:
@@ -270,17 +262,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "menu_balance":
         async with async_session() as session:
             await send_balance_message(query, session, query.from_user.id)
-    elif data == "menu_invest":
-        await query.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.")
-        return
-    elif data == "menu_withdraw":
-        await query.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
-        return
     elif data == "menu_history":
         await query.edit_message_text("🧾 History (coming soon)", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
     elif data == "menu_help":
         await query.edit_message_text(f"❓ Help\nContact support: {SUPPORT_USER}", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
     else:
+        # unknown or handled elsewhere
         return
 
 # Send balance message helper
@@ -305,9 +292,11 @@ async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return INVEST_AMOUNT
 
 async def invest_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Entry point for CallbackQuery pattern '^menu_invest$'
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.")
+    logger.info("Invest conversation started for user %s", update.effective_user.id)
     return INVEST_AMOUNT
 
 async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -375,9 +364,11 @@ async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     return WITHDRAW_AMOUNT
 
 async def withdraw_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Entry point for CallbackQuery pattern '^menu_withdraw$'
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
+    logger.info("Withdraw conversation started for user %s", update.effective_user.id)
     return WITHDRAW_AMOUNT
 
 async def withdraw_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -540,7 +531,6 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
     if not _is_admin(user_id):
         await update.message.reply_text("Forbidden: admin only.")
         return
-    # Query pending transactions
     async with async_session() as session:
         result = await session.execute(select(Transaction).where(Transaction.status == 'pending').order_by(Transaction.created_at.asc()))
         pending: List[Transaction] = result.scalars().all()
@@ -575,6 +565,7 @@ async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
+    # ConversationHandler for Invest & Withdraw
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('invest', invest_cmd_handler),
@@ -598,11 +589,15 @@ def main():
         allow_reentry=True,
     )
 
-    app.add_handler(CommandHandler("start", start_handler))
-    app.add_handler(CallbackQueryHandler(menu_callback))
+    # REGISTER handlers in the correct order:
+    # 1) ConversationHandler (so its CallbackQuery entry_points get first shot)
+    # 2) admin callback handler for approve/reject
+    # 3) generic menu_callback (handles other menu items)
     app.add_handler(conv_handler)
-    app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
     app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern='^admin_(approve|reject)_\\d+$'))
+    app.add_handler(CallbackQueryHandler(menu_callback))
+    app.add_handler(CommandHandler("start", start_handler))
+    app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
     # NEW: /pending admin command
     app.add_handler(CommandHandler("pending", admin_pending_command))
