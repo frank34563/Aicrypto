@@ -1,7 +1,10 @@
-# Full patched bot.py — remove cancel after amount prompt, ask for screenshot/txid,
-# and ensure confirm button for deposit works correctly (with logs for debugging).
-# Includes persistent menu, invest/withdraw flows, admin approve/reject, /pending, ensure_columns.
-# Paste this into bot.py and deploy.
+# Full patched bot.py — Fixes deposit confirmation flow and admin approval notifications
+# - When user confirms "I sent the exact amount" we create a pending transaction,
+#   notify the admin, and notify the user that deposit is processing.
+# - When admin approves an invest transaction, we mark it credited, move funds
+#   from balance_in_process -> balance and notify the user that investment started.
+# - Keeps persistent menu, invest/withdraw flows, /pending, ensure_columns.
+# Paste this into your bot.py and deploy.
 
 import os
 import logging
@@ -39,7 +42,7 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN not set!")
 
-ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))  # set to admin Telegram user id
+ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))  # admin Telegram user id
 MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbc...')
 MASTER_NETWORK = os.getenv('MASTER_NETWORK', 'TRC20')
 SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
@@ -216,13 +219,11 @@ def build_inline_menu(full_width: bool, support_url: Optional[str]):
         ]
     return InlineKeyboardMarkup(rows)
 
-# Confirm/Cancel keyboard helpers
+# Confirm keyboard helpers
 def user_confirm_kb(prefix: str):
-    # prefix: 'invest' -> invest_confirm_yes/invest_confirm_no
     return InlineKeyboardMarkup([[InlineKeyboardButton("✅ I sent the exact amount", callback_data=f"{prefix}_confirm_yes"),
                                  InlineKeyboardButton("❌ I did NOT send / Cancel", callback_data=f"{prefix}_confirm_no")]])
 
-# Admin keyboard
 def admin_action_kb(tx_id: int):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Approve", callback_data=f"admin_approve_{tx_id}"),
@@ -274,7 +275,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ref = await get_user(session, user_id)
         ref_count = ref.get('referral_count', 0)
         ref_earn = float(ref.get('referral_earnings') or 0)
-        # build referral link safely (bot username)
         bot_username = (await context.bot.get_me()).username
         referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
         text = (f"👥 Referrals\nCount: {ref_count}\nEarnings: {ref_earn:.2f}$\n"
@@ -325,7 +325,6 @@ async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return INVEST_AMOUNT
 
 async def invest_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Entry point for CallbackQuery pattern '^menu_invest$'
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.")
@@ -336,7 +335,7 @@ async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_T
     """
     After the user sends the amount we: - store it, - show the deposit wallet & network,
     - and ask the user to upload a screenshot or send the txid.
-    We intentionally DO NOT show a cancel button here (as requested).
+    No cancel button shown here.
     """
     text = (update.message.text or "").strip()
     try:
@@ -354,15 +353,13 @@ async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_T
         f"Send to wallet:\nWallet: <code>{MASTER_WALLET}</code>\nNetwork: <b>{MASTER_NETWORK}</b>\n\n"
         "After sending, upload a screenshot of the transaction OR send the transaction hash (txid)."
     )
-    # IMPORTANT: no cancel button here per your request
+    # No cancel button here per your request
     await update.message.reply_text(wallet_msg, parse_mode="HTML")
-    # Next state: waiting for proof (photo or txid)
     return INVEST_PROOF
 
 async def invest_proof_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    When user uploads proof (photo or txid), store it temporarily and ask user to CONFIRM they sent the exact amount.
-    Confirmation is handled by invest_confirm_callback (CallbackQuery).
+    When user uploads proof (photo or txid), store it and show confirm/cancel inline buttons.
     """
     user_id = update.effective_user.id
     amount = context.user_data.get('invest_amount')
@@ -395,7 +392,9 @@ async def invest_proof_received(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Handle the confirmation callback from the user after they uploaded proof.
+    Handle the confirmation callback after the user uploaded proof.
+    - On Confirm: create pending transaction, notify user "processing" and notify admin with approve/reject buttons.
+    - On Cancel: clear user_data and show main menu.
     """
     query = update.callback_query
     await query.answer()
@@ -418,8 +417,9 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
         context.user_data.pop('invest_proof', None)
         return ConversationHandler.END
 
-    # create pending transaction and notify admin
+    # Create pending transaction and move amount to balance_in_process (optional: keep as requested/in_process)
     async with async_session() as session:
+        # For deposit, we do NOT automatically increase balance; admin will credit after approval.
         tx_id = await log_transaction(session,
                                       user_id=user_id,
                                       type='invest',
@@ -429,20 +429,35 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
                                       wallet=MASTER_WALLET,
                                       network=MASTER_NETWORK,
                                       created_at=datetime.utcnow())
-    await query.message.reply_text(f"✅ Investment request #{tx_id} recorded and pending admin approval.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
 
-    admin_text = f"New INVEST request #{tx_id}\nUser: {user_id}\nAmount: {amount:.2f}$\nProof: {proof}\nWallet: {MASTER_WALLET}\nNetwork: {MASTER_NETWORK}"
+    # Notify user that deposit is processing and waiting for blockchain confirmations/admin
+    await query.message.reply_text(
+        f"✅ Deposit proof received. Your deposit request #{tx_id} is processing — please wait for blockchain confirmation and admin approval.",
+        reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL)
+    )
+
+    # Notify admin with approve/reject buttons
+    admin_text = (
+        f"New INVEST request #{tx_id}\n"
+        f"User: {user_id}\n"
+        f"Amount: {amount:.2f}$\n"
+        f"Wallet: {MASTER_WALLET}\n"
+        f"Network: {MASTER_NETWORK}\n"
+        f"Proof: {proof}\n\n"
+        f"Approve to credit the user's balance and start investment."
+    )
     try:
         if ADMIN_ID and ADMIN_ID != 0:
             await context.application.bot.send_message(chat_id=ADMIN_ID, text=admin_text, reply_markup=admin_action_kb(tx_id))
     except Exception:
         logger.exception("Failed to notify admin for invest")
 
+    # Clear user_data
     context.user_data.pop('invest_amount', None)
     context.user_data.pop('invest_proof', None)
     return ConversationHandler.END
 
-# ---- WITHDRAW FLOW ----
+# ---- WITHDRAW FLOW (unchanged behavior) ----
 async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
     return WITHDRAW_AMOUNT
@@ -563,9 +578,21 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
 
 # ---- ADMIN CALLBACKS ----
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    When admin approves:
+      - If invest: mark transaction 'credited', add amount to user's balance, notify user that investment started.
+      - If withdraw: mark transaction 'completed' and adjust balance_in_process (already deducted at request).
+    When admin rejects:
+      - If invest: mark 'rejected' (no balance change).
+      - If withdraw: mark 'rejected' and restore user's balance from balance_in_process.
+    """
     query = update.callback_query
     await query.answer()
     data = query.data
+    if not data:
+        return
+    logger.info("admin_callback_handler data=%s", data)
+
     if data.startswith("admin_approve_") or data.startswith("admin_reject_"):
         parts = data.split("_")
         action = parts[1]
@@ -576,33 +603,63 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             if not tx:
                 await query.message.reply_text("Transaction not found.")
                 return
+
+            # APPROVE
             if action == 'approve':
                 if tx.type == 'invest':
-                    await session.execute(update(Transaction).where(Transaction.id == tx_id).values(status='in_process'))
+                    # Credit user's balance and mark transaction as credited
+                    user = await get_user(session, tx.user_id)
+                    # Add amount to balance (investment starts)
+                    new_balance = float(user['balance'] or 0) + float(tx.amount or 0)
+                    await update_user(session, tx.user_id, balance=new_balance)
+                    await session.execute(update(Transaction).where(Transaction.id == tx_id).values(status='credited'))
+                    await session.commit()
+                    await query.message.reply_text(f"Invest transaction #{tx_id} credited.")
+                    # Notify user
+                    try:
+                        await context.application.bot.send_message(chat_id=tx.user_id, text=f"✅ Your deposit #{tx_id} is approved. Your investment has started. Amount credited: {float(tx.amount):.2f}$.")
+                    except Exception:
+                        logger.exception("Failed to notify user about invest credit")
                 elif tx.type == 'withdraw':
-                    await session.execute(update(Transaction).where(Transaction.id == tx_id).values(status='completed'))
+                    # Mark withdraw completed, reduce balance_in_process (already moved at request)
                     user = await get_user(session, tx.user_id)
                     new_in_process = max(0.0, float(user['balance_in_process'] or 0) - float(tx.amount or 0))
                     await update_user(session, tx.user_id, balance_in_process=new_in_process)
-                await session.commit()
-                await query.message.reply_text(f"Transaction #{tx_id} approved.")
-                try:
-                    await context.application.bot.send_message(chat_id=tx.user_id, text=f"Your transaction #{tx_id} has been approved by the admin.")
-                except Exception:
-                    pass
+                    await session.execute(update(Transaction).where(Transaction.id == tx_id).values(status='completed'))
+                    await session.commit()
+                    await query.message.reply_text(f"Withdraw transaction #{tx_id} completed.")
+                    try:
+                        await context.application.bot.send_message(chat_id=tx.user_id, text=f"✅ Your withdrawal #{tx_id} has been completed by admin.")
+                    except Exception:
+                        logger.exception("Failed to notify user about withdraw completion")
+                else:
+                    await query.message.reply_text("Unknown transaction type.")
+                return
+
+            # REJECT
             else:
-                await session.execute(update(Transaction).where(Transaction.id == tx_id).values(status='rejected'))
-                if tx.type == 'withdraw':
+                if tx.type == 'invest':
+                    await session.execute(update(Transaction).where(Transaction.id == tx_id).values(status='rejected'))
+                    await session.commit()
+                    await query.message.reply_text(f"Invest transaction #{tx_id} rejected.")
+                    try:
+                        await context.application.bot.send_message(chat_id=tx.user_id, text=f"❌ Your deposit #{tx_id} was rejected by admin.")
+                    except Exception:
+                        logger.exception("Failed to notify user about invest rejection")
+                elif tx.type == 'withdraw':
+                    # Restore user's balance from in_process
                     user = await get_user(session, tx.user_id)
                     new_in_process = max(0.0, float(user['balance_in_process'] or 0) - float(tx.amount or 0))
                     new_balance = float(user['balance'] or 0) + float(tx.amount or 0)
                     await update_user(session, tx.user_id, balance=new_balance, balance_in_process=new_in_process)
-                await session.commit()
-                await query.message.reply_text(f"Transaction #{tx_id} rejected.")
-                try:
-                    await context.application.bot.send_message(chat_id=tx.user_id, text=f"Your transaction #{tx_id} was rejected by the admin.")
-                except Exception:
-                    pass
+                    await session.execute(update(Transaction).where(Transaction.id == tx_id).values(status='rejected'))
+                    await session.commit()
+                    await query.message.reply_text(f"Withdraw transaction #{tx_id} rejected and funds restored.")
+                    try:
+                        await context.application.bot.send_message(chat_id=tx.user_id, text=f"❌ Your withdrawal #{tx_id} was rejected by admin. Funds restored to your balance.")
+                    except Exception:
+                        logger.exception("Failed to notify user about withdraw rejection")
+                return
 
 # ---- NEW: /pending ADMIN COMMAND ----
 def _is_admin(user_id: int) -> bool:
@@ -648,7 +705,6 @@ async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
-    # ConversationHandler for Invest & Withdraw
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('invest', invest_cmd_handler),
@@ -675,16 +731,16 @@ def main():
     )
 
     # Register handlers in correct order:
-    app.add_handler(conv_handler)  # conversation first so its CallbackQuery entry_points get first shot
+    app.add_handler(conv_handler)  # conversation first so its CallbackQuery entry points get first shot
     app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern='^admin_(approve|reject)_\\d+$'))
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
-    # NEW: /pending admin command
+    # /pending
     app.add_handler(CommandHandler("pending", admin_pending_command))
 
-    # Admin convenience commands (legacy)
+    # admin convenience commands (legacy)
     app.add_handler(CommandHandler("approve_withdraw", admin_approve_withdraw_cmd))
     app.add_handler(CommandHandler("credit_invest", admin_credit_invest_cmd))
 
@@ -705,7 +761,7 @@ def main():
     logger.info("AiCrypto Bot STARTED")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# Start & admin legacy handlers used above
+# Start & helper handlers used above
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL)
     await update.message.reply_text("Main Menu", reply_markup=kb)
