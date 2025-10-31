@@ -35,30 +35,33 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # === DATABASE ===
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.declarative import declarative_base
+import os
+
 Base = declarative_base()
 
-# === FORCE psycopg DRIVER ===
+# === CONNECT TO RAILWAY POSTGRESQL ===
 DATABASE_URL = os.getenv('DATABASE_URL')
 
+# YOUR URL: postgresql://postgres:NdoKNUogQnVZEOtXUtkztiIZOioJqfKa@postgres.railway.internal:5432/railway
 if DATABASE_URL:
-    # Railway gives: postgres://user:pass@host:port/db
+    # Ensure it uses psycopg (NOT psycopg2)
     if DATABASE_URL.startswith("postgres://"):
-        # CRITICAL: Use +psycopg:// (NOT psycopg2)
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
     elif DATABASE_URL.startswith("postgresql://"):
-        # If already postgresql://, force +psycopg
         if "+psycopg" not in DATABASE_URL:
             DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 else:
     DATABASE_URL = "sqlite+aiosqlite:///bot.db"
 
-# DEBUG: Print URL (remove in prod)
-# print("DATABASE_URL:", DATABASE_URL)
-
+# CREATE ENGINE
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    future=True
+    future=True,
+    pool_size=20,
+    max_overflow=30
 )
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
