@@ -1,5 +1,8 @@
-# Full patched file: adds /pending admin command to list pending transactions with inline approve/reject buttons
-# (Includes previous flows: persistent menu, invest/withdraw flows, confirm buttons, admin approve/reject)
+# Full patched bot.py — includes ensure_columns() and calls it from init_db
+# - Persistent menu, invest/withdraw flows, admin approve/reject, /pending command
+# - ensure_columns() runs safe ALTER TABLE IF NOT EXISTS for nullable columns (wallet_network)
+# Paste this file into bot.py and deploy.
+
 import os
 import logging
 from datetime import datetime
@@ -24,7 +27,7 @@ from telegram.ext import (
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, DateTime,
-    BigInteger, select, update, func, Numeric
+    BigInteger, select, update, func, Numeric, text
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -74,7 +77,7 @@ class User(Base):
     referral_earnings = Column(Numeric(15, 2), default=0.0)
     referrer_id = Column(BigInteger, nullable=True)
     wallet_address = Column(String)
-    wallet_network = Column(String)
+    wallet_network = Column(String)  # new column; ensure_columns will create if missing
     joined_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -98,35 +101,76 @@ async def _create_all_with_timeout(engine_to_use):
     async with engine_to_use.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+async def ensure_columns():
+    """
+    Ensure nullable columns that may be missing on older schemas exist.
+    Safe to run at startup; uses ALTER TABLE ... ADD COLUMN IF NOT EXISTS for idempotence.
+    Add additional columns here as your models evolve.
+    """
+    async with engine.begin() as conn:
+        # Add wallet_network to users table if missing (nullable)
+        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_network VARCHAR"))
+        # Add any other safe nullable columns here as needed:
+        # await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS metadata JSONB"))
+
 async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bool = True):
+    """
+    Initialize the database with retries and optional sqlite fallback.
+    This init_db attempts to create tables and then runs ensure_columns() to add
+    safe nullable columns that might be missing on older schemas.
+    """
     global engine, async_session, DATABASE_URL
+
     last_exc = None
     attempt = 0
     current_engine = engine
+
     while attempt < retries:
         attempt += 1
         try:
+            # attempt to create tables (no-op if already created)
             await _create_all_with_timeout(current_engine)
+
+            # Ensure schema has expected nullable columns (idempotent)
+            try:
+                await ensure_columns()
+            except Exception as col_exc:
+                # Log but don't treat as fatal here — allow fallback to sqlite if needed afterwards
+                logger.warning("ensure_columns() returned error: %s", col_exc)
+
             logger.info("Database initialized successfully.")
             return
         except Exception as e:
             last_exc = e
             logger.warning("Database init attempt %d/%d failed: %s", attempt, retries, e)
             wait = backoff * (2 ** (attempt - 1))
+            logger.info("Waiting %.1f seconds before next DB init attempt...", wait)
             await asyncio.sleep(wait)
+
     logger.error("All %d database init attempts failed. Last error: %s", retries, last_exc)
+
     if fallback_to_sqlite:
         try:
             sqlite_url = "sqlite+aiosqlite:///bot_fallback.db"
+            logger.warning("Falling back to sqlite DB at %s for local/dev (NOT recommended for production).", sqlite_url)
             from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
             DATABASE_URL = sqlite_url
             engine = _create_async_engine(DATABASE_URL, echo=False, future=True)
             async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
             await _create_all_with_timeout(engine)
-            logger.info("Fallback sqlite database initialized.")
+
+            # Ensure columns in sqlite fallback as well (idempotent)
+            try:
+                await ensure_columns()
+            except Exception as col_exc:
+                logger.warning("ensure_columns() failed on sqlite fallback: %s", col_exc)
+
+            logger.info("Fallback sqlite database initialized. Bot will continue using sqlite.")
             return
         except Exception as e2:
             logger.exception("Fallback to sqlite failed: %s", e2)
+
+    logger.critical("Unable to initialize database and fallback failed — exiting.")
     await asyncio.sleep(0.1)
     sys.exit(1)
 
@@ -503,12 +547,11 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
         if not pending:
             await update.message.reply_text("No pending transactions.")
             return
-        # For each pending transaction, send a compact message with approve/reject buttons
         for tx in pending:
-            text = (f"Pending #{tx.id}\nType: {tx.type.upper()}\nUser: {tx.user_id}\nAmount: {float(tx.amount):.2f}$\n"
-                    f"Wallet: {tx.wallet or '-'}\nNetwork: {tx.network or '-'}\nProof: {tx.proof or '-'}\nCreated: {tx.created_at}")
+            text_msg = (f"Pending #{tx.id}\nType: {tx.type.upper()}\nUser: {tx.user_id}\nAmount: {float(tx.amount):.2f}$\n"
+                        f"Wallet: {tx.wallet or '-'}\nNetwork: {tx.network or '-'}\nProof: {tx.proof or '-'}\nCreated: {tx.created_at}")
             try:
-                await update.message.reply_text(text, reply_markup=admin_action_kb(tx.id))
+                await update.message.reply_text(text_msg, reply_markup=admin_action_kb(tx.id))
             except Exception:
                 logger.exception("Failed to send pending tx to admin for tx %s", tx.id)
 
