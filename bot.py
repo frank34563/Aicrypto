@@ -1,3 +1,4 @@
+# Full file (patched): UI design upgrade — default to stacked, larger-looking inline buttons
 import os
 import logging
 from datetime import datetime
@@ -38,26 +39,16 @@ logger = logging.getLogger(__name__)
 Base = declarative_base()
 
 # === FORCE psycopg DRIVER ===
-# Read DATABASE_URL from env and normalize to SQLAlchemy + psycopg driver
 DATABASE_URL = os.getenv('DATABASE_URL')
-
 if DATABASE_URL:
-    # Railway gives: postgres://user:pass@host:port/db
     if DATABASE_URL.startswith("postgres://"):
-        # CRITICAL: Use +psycopg:// (NOT psycopg2)
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
-    elif DATABASE_URL.startswith("postgresql://"):
-        # If already postgresql://, force +psycopg
-        if "+psycopg" not in DATABASE_URL:
-            DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
+    elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
+        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 else:
     DATABASE_URL = "sqlite+aiosqlite:///bot.db"
 
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    future=True
-)
+engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 class User(Base):
@@ -86,25 +77,14 @@ class Transaction(Base):
     network = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-# Init DB helpers and resilient init
-import asyncio
-import sys
-import time
-
+# Init DB helpers (unchanged resilient init from previous patch)
+import asyncio, sys, time
 async def _create_all_with_timeout(engine_to_use):
-    """
-    Run metadata.create_all using the provided async engine.
-    """
     async with engine_to_use.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
 async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bool = True):
-    """
-    Initialize the database with retries and optional sqlite fallback.
-    The global declaration must appear before any use/assignment of the global names.
-    """
     global engine, async_session, DATABASE_URL
-
     last_exc = None
     attempt = 0
     current_engine = engine
@@ -128,7 +108,6 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
         try:
             sqlite_url = "sqlite+aiosqlite:///bot_fallback.db"
             logger.warning("Falling back to sqlite DB at %s for local/dev (NOT recommended for production).", sqlite_url)
-            # Recreate engine/session objects to use sqlite
             from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
             DATABASE_URL = sqlite_url
             engine = _create_async_engine(DATABASE_URL, echo=False, future=True)
@@ -140,7 +119,6 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
             logger.exception("Fallback to sqlite failed: %s", e2)
 
     logger.critical("Unable to initialize database and fallback failed — exiting.")
-    # Ensure we flush logs and exit with non-zero code so the container platform sees failure
     await asyncio.sleep(0.1)
     sys.exit(1)
 
@@ -166,34 +144,38 @@ async def log_transaction(session: AsyncSession, **data):
 # === STATES ===
 (AMOUNT, TX_PROOF, WITHDRAW_AMOUNT, WALLET_ADDR, NETWORK) = range(5)
 
-# === MENUS ===
-def build_inline_menu(full_width: bool = False) -> InlineKeyboardMarkup:
-    # full_width=True => single-button rows (stacked)
+# === UI: upgraded inline menu (default: full-width stacked buttons like image 3) ===
+def build_inline_menu(full_width: bool = True) -> InlineKeyboardMarkup:
+    """
+    Default layout: single full-width stacked buttons (visually similar to the screenshot).
+    If you want a compact grid, call build_inline_menu(full_width=False).
+    """
     if full_width:
+        # Put important actions first; use emojis to improve visual scanning
         rows = [
-            [InlineKeyboardButton("Balance", callback_data="menu_balance")],
-            [InlineKeyboardButton("Invest", callback_data="menu_invest")],
-            [InlineKeyboardButton("Withdraw", callback_data="menu_withdraw")],
-            [InlineKeyboardButton("History", callback_data="menu_history")],
-            [InlineKeyboardButton("Referrals", callback_data="menu_referrals")],
-            [InlineKeyboardButton("Settings", callback_data="menu_settings")],
-            [InlineKeyboardButton("Information", callback_data="menu_info")],
-            [InlineKeyboardButton("Help", callback_data="menu_help")],
+            [InlineKeyboardButton("💰 Balance", callback_data="menu_balance")],
+            [InlineKeyboardButton("📈 Invest", callback_data="menu_invest")],
+            [InlineKeyboardButton("🧾 History", callback_data="menu_history")],
+            [InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")],
+            [InlineKeyboardButton("👥 Referrals", callback_data="menu_referrals")],
+            [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
+            [InlineKeyboardButton("ℹ️ Information", callback_data="menu_info")],
+            [InlineKeyboardButton("❓ Help", callback_data="menu_help")],
         ]
     else:
         rows = [
-            [InlineKeyboardButton("Balance", callback_data="menu_balance"),
-             InlineKeyboardButton("Invest", callback_data="menu_invest")],
-            [InlineKeyboardButton("Withdraw", callback_data="menu_withdraw"),
-             InlineKeyboardButton("History", callback_data="menu_history")],
-            [InlineKeyboardButton("Referrals", callback_data="menu_referrals"),
-             InlineKeyboardButton("Settings", callback_data="menu_settings")],
-            [InlineKeyboardButton("Information", callback_data="menu_info"),
-             InlineKeyboardButton("Help", callback_data="menu_help")],
+            [InlineKeyboardButton("💰 Balance", callback_data="menu_balance"),
+             InlineKeyboardButton("📈 Invest", callback_data="menu_invest")],
+            [InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw"),
+             InlineKeyboardButton("🧾 History", callback_data="menu_history")],
+            [InlineKeyboardButton("👥 Referrals", callback_data="menu_referrals"),
+             InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
+            [InlineKeyboardButton("ℹ️ Info", callback_data="menu_info"),
+             InlineKeyboardButton("❓ Help", callback_data="menu_help")],
         ]
     return InlineKeyboardMarkup(rows)
 
-# === DAILY PROFIT + REFERRALS ===
+# === DAILY PROFIT + REFERRALS === (unchanged)
 async def daily_profit_job():
     async with async_session() as session:
         result = await session.execute(select(User))
@@ -217,7 +199,7 @@ async def daily_profit_job():
                 )
                 await log_transaction(session, user_id=user.referrer_id, type='referral_profit', amount=bonus, status='credited')
 
-# === HANDLERS ===
+# === HANDLERS & upgraded balance text styling ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     args = context.args
@@ -234,55 +216,58 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         else:
             await update.message.reply_text("Welcome to AiCrypto!")
-        # send an inline keyboard instead of the reply keyboard
-        kb = build_inline_menu(full_width=False)
+        # show the stacked inline menu by default
+        kb = build_inline_menu(full_width=True)
         await update.message.reply_text("Choose:", reply_markup=kb)
 
 async def send_balance_message(query_or_message, session: AsyncSession, user_id: int):
+    """
+    Use HTML formatting for clearer UI: larger labels and emojis (Telegram uses client rendering).
+    When called from a CallbackQuery we edit the message; otherwise we send a new one.
+    """
     user = await get_user(session, user_id)
-    msg = f"""
-Balance: {user['balance']:.2f}$
-In Process: {user['balance_in_process']:.2f}$
-Daily Profit: {user['daily_profit']:.2f}$
-Total Profit: {user['total_profit']:.2f}$
-Referral Earnings: {user['referral_earnings']:.2f}$
-
-Manager: {SUPPORT_USER}
-    """.strip()
-    # query_or_message can be a CallbackQuery or Message; handle accordingly
+    # HTML formatting: bold labels, newline spacing for readability
+    msg = (
+        f"💎 <b>Balance</b>\n"
+        f"Your Balance: <b>{user['balance']:.2f}$</b>\n"
+        f"Balance in process: <b>{user['balance_in_process']:.2f}$</b>\n"
+        f"Daily Profit: <b>{user['daily_profit']:.2f}$</b>\n"
+        f"Total Profit: <b>{user['total_profit']:.2f}$</b>\n\n"
+        f"Your personal manager: <b>{SUPPORT_USER}</b>"
+    )
     try:
-        # if CallbackQuery: edit original message and show stacked menu
-        await query_or_message.edit_message_text(msg, reply_markup=build_inline_menu(full_width=True))
+        # If query_or_message is a CallbackQuery, edit the originating message and display stacked menu below
+        await query_or_message.edit_message_text(msg, reply_markup=build_inline_menu(full_width=True), parse_mode="HTML")
     except Exception:
-        # otherwise send a new message
-        await query_or_message.reply_text(msg, reply_markup=build_inline_menu(full_width=True))
+        # Fallback to sending a new message
+        await query_or_message.reply_text(msg, reply_markup=build_inline_menu(full_width=True), parse_mode="HTML")
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Handles callback queries for the inline menu
     query = update.callback_query
     data = query.data
-    await query.answer()  # stop loading spinner on client
+    await query.answer()
 
     async with async_session() as session:
         if data == "menu_balance":
             await send_balance_message(query, session, query.from_user.id)
         elif data == "menu_invest":
-            await query.edit_message_text("Invest menu: choose a plan or enter amount.")
+            await query.edit_message_text("📈 <b>Invest</b>\nChoose a plan or enter an amount.", parse_mode="HTML")
         elif data == "menu_withdraw":
-            await query.edit_message_text("Withdraw menu: enter amount to withdraw.")
+            await query.edit_message_text("💸 <b>Withdraw</b>\nEnter amount to withdraw.", parse_mode="HTML")
         elif data == "menu_history":
-            await query.edit_message_text("Your history:\n(coming soon)")
+            await query.edit_message_text("🧾 <b>History</b>\nYour operations history (coming soon).", parse_mode="HTML")
         elif data == "menu_referrals":
             ref = await get_user(session, query.from_user.id)
-            await query.edit_message_text(f"Referral count: {ref['referral_count']}\nReferral earnings: {ref['referral_earnings']:.2f}$")
+            await query.edit_message_text(f"👥 <b>Referrals</b>\nCount: {ref['referral_count']}\nEarnings: {ref['referral_earnings']:.2f}$", parse_mode="HTML")
         elif data == "menu_settings":
-            await query.edit_message_text("Settings menu (profile, wallet address, network).")
+            await query.edit_message_text("⚙️ <b>Settings</b>\nProfile, wallet address, network.", parse_mode="HTML")
         elif data == "menu_info":
-            await query.edit_message_text("Information: bot rules, plans, and FAQ.")
+            await query.edit_message_text("ℹ️ <b>Information</b>\nBot rules, plans, and FAQ.", parse_mode="HTML")
         elif data == "menu_help":
-            await query.edit_message_text(f"Contact support: {SUPPORT_USER}")
+            # Example: make Help open a URL or show contact — here we display contact info
+            await query.edit_message_text(f"❓ <b>Help</b>\nContact support: {SUPPORT_USER}", parse_mode="HTML")
         else:
-            await query.edit_message_text("Unknown action", reply_markup=build_inline_menu())
+            await query.edit_message_text("Unknown action", reply_markup=build_inline_menu(full_width=True))
 
 # Keep a text handler fallback (for typed commands like "Balance")
 async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -295,17 +280,12 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(menu_callback))
-    # Keep a message handler so typing "Balance" still works for users
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
-    # Add other handlers as needed...
 
-    # Create and set an event loop for this thread (fixes RuntimeError on Python >=3.10)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-    # Create AsyncIOScheduler and, for clarity, pass the loop explicitly if supported
     try:
-        # Newer versions accept event_loop parameter name; keep fallback to default ctor
         scheduler = AsyncIOScheduler(event_loop=loop)
     except TypeError:
         scheduler = AsyncIOScheduler()
@@ -313,11 +293,10 @@ def main():
     scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     scheduler.start()
 
-    print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13 (using InlineKeyboard)")
+    print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13 (UI upgraded: stacked inline buttons)")
     try:
         app.run_polling(allowed_updates=Update.ALL_TYPES)
     finally:
-        # Ensure clean shutdown if termination occurs
         try:
             scheduler.shutdown(wait=False)
         except Exception:
@@ -329,11 +308,9 @@ def main():
             pass
 
 if __name__ == '__main__':
-    # Initialize DB before starting the bot
     try:
         asyncio.run(init_db(retries=5, backoff=2.0, fallback_to_sqlite=True))
     except SystemExit:
-        # allow explicit sys.exit(1) to propagate after logging
         raise
     except Exception as e:
         logger.exception("Unexpected error during DB initialization: %s", e)
