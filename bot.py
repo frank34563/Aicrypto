@@ -1,3 +1,5 @@
+# https://github.com/Princegluck/A/blob/main/bot.py
+# Full patched file: default paired (two-column) menu layout, with env control to switch to full-width stacked
 import os
 import logging
 from datetime import datetime
@@ -29,11 +31,11 @@ if not BOT_TOKEN:
 ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))
 MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbc...')
 SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
-# Optional explicit support URL (preferred). If not provided, we derive from SUPPORT_USER.
 SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else None)
 
-# Control whether menus are full-width stacked by default. Accepts "true"/"false" (case-insensitive).
-MENU_FULL_WIDTH = os.getenv('MENU_FULL_WIDTH', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
+# MENU_FULL_WIDTH controls stacked full-width layout when true.
+# For "pairs" (two-column) layout set MENU_FULL_WIDTH=false (this file defaults to pairs)
+MENU_FULL_WIDTH = os.getenv('MENU_FULL_WIDTH', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 
 DATABASE_URL = os.getenv('DATABASE_URL')
 
@@ -90,10 +92,6 @@ async def _create_all_with_timeout(engine_to_use):
         await conn.run_sync(Base.metadata.create_all)
 
 async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bool = True):
-    """
-    Initialize the DB with retries. If fallback_to_sqlite is True and remote DB unreachable,
-    switch to a local sqlite fallback so the bot can start in dev/testing environments.
-    """
     global engine, async_session, DATABASE_URL
 
     last_exc = None
@@ -103,7 +101,6 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
     while attempt < retries:
         attempt += 1
         try:
-            # Attempt to create tables / connect
             await _create_all_with_timeout(current_engine)
             logger.info("Database initialized successfully.")
             return
@@ -159,7 +156,9 @@ async def log_transaction(session: AsyncSession, **data):
 # === MENUS ===
 def build_inline_menu(full_width: bool, support_url: str | None):
     """
-    Build an InlineKeyboardMarkup. If support_url is provided, the Help button will open that URL.
+    Build a menu either in full-width stacked rows (if full_width True)
+    or in paired two-column layout (if full_width False).
+    This file defaults to paired layout (MENU_FULL_WIDTH=False).
     """
     if full_width:
         rows = [
@@ -171,20 +170,20 @@ def build_inline_menu(full_width: bool, support_url: str | None):
             [InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
             [InlineKeyboardButton("ℹ️ Information", callback_data="menu_info")],
         ]
-        # Add Help as URL button if we have support_url
         if support_url:
             rows.append([InlineKeyboardButton("❓ Help", url=support_url)])
         else:
             rows.append([InlineKeyboardButton("❓ Help", callback_data="menu_help")])
     else:
+        # Paired two-column layout (menu should be in pairs)
         rows = [
             [InlineKeyboardButton("💰 Balance", callback_data="menu_balance"),
              InlineKeyboardButton("📈 Invest", callback_data="menu_invest")],
-            [InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw"),
-             InlineKeyboardButton("🧾 History", callback_data="menu_history")],
+            [InlineKeyboardButton("🧾 History", callback_data="menu_history"),
+             InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")],
             [InlineKeyboardButton("👥 Referrals", callback_data="menu_referrals"),
              InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
-            [InlineKeyboardButton("ℹ️ Info", callback_data="menu_info"),
+            [InlineKeyboardButton("ℹ️ Information", callback_data="menu_info"),
              InlineKeyboardButton("❓ Help", url=support_url if support_url else "https://t.me/")],
         ]
     return InlineKeyboardMarkup(rows)
@@ -231,7 +230,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("Welcome to AiCrypto!")
 
-        # Use the environment control to decide menu layout and pass support URL
         kb = build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL)
         await update.message.reply_text("Choose:", reply_markup=kb)
 
@@ -272,7 +270,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "menu_info":
             await query.edit_message_text("ℹ️ <b>Information</b>\nBot rules, plans, and FAQ.", parse_mode="HTML")
         elif data == "menu_help":
-            # Fallback: if support URL not available and Help was created as callback, show contact
+            # Fallback when Help is created as a callback (should be URL in paired layout)
             await query.edit_message_text(f"❓ <b>Help</b>\nContact support: {SUPPORT_USER}", parse_mode="HTML")
         else:
             await query.edit_message_text("Unknown action", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
@@ -301,7 +299,7 @@ def main():
     scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     scheduler.start()
 
-    print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13 (UI env-controlled + Help URL)")
+    print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13 (paired menu layout)")
     try:
         app.run_polling(allowed_updates=Update.ALL_TYPES)
     finally:
