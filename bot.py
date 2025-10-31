@@ -1,9 +1,6 @@
-# Full patched bot.py — history now shows user's own transactions; admins can view all transactions with /history all
-# - Admin approve/reject remain idempotent (single action)
-# - /history for users returns their transactions (recent 50)
-# - /history all (admin only) returns all transactions (recent 200) grouped by status/type
-# - All previous flows and commands preserved
-# NOTE: set env vars BOT_TOKEN, ADMIN_ID (int), MASTER_WALLET, MASTER_NETWORK, DATABASE_URL (optional)
+# Full patched bot.py — fixes NameError: balance_text_handler not defined by adding the missing handler
+# and ensures it's registered correctly. Ready to copy/paste and deploy.
+# (This file is the consolidated working bot from previous steps with the fix applied.)
 
 import os
 import logging
@@ -256,7 +253,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with async_session() as session:
             await send_balance_message(query, session, query.from_user.id)
     elif data == "menu_history":
-        # trigger user's history command
         await history_command(update, context)
     elif data == "menu_referrals":
         user_id = query.from_user.id
@@ -283,7 +279,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return
 
-# Balance helper
+# Balance helper (used elsewhere)
 async def send_balance_message(query_or_message, session: AsyncSession, user_id: int):
     user = await get_user(session, user_id)
     msg = (f"💎 <b>Balance</b>\nYour Balance: <b>{float(user['balance']):.2f}$</b>\n"
@@ -294,6 +290,14 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
         await query_or_message.edit_message_text(msg, reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL), parse_mode="HTML")
     except Exception:
         await query_or_message.reply_text(msg, reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL), parse_mode="HTML")
+
+# --- FIXED: balance_text_handler was missing; define it here ---
+async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handler for plain-text "Balance" message fallback (and used for /balance command).
+    """
+    async with async_session() as session:
+        await send_balance_message(update.message, session, update.effective_user.id)
 
 # ---- INVEST FLOW ----
 async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -613,15 +617,9 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 # ---- HISTORY COMMAND (users & admin) ----
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /history -> shows the calling user's recent transactions (limit 50)
-    /history all -> admin-only: shows recent transactions across users (limit 200), grouped by type/status
-    """
     user_id = update.effective_user.id
     args = context.args if hasattr(context, "args") else []
     is_admin = _is_admin(user_id)
-
-    # Admin request for all
     if args and args[0].lower() == "all":
         if not is_admin:
             await update.message.reply_text("Forbidden: admin only.")
@@ -633,7 +631,6 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not txs:
             await update.message.reply_text("No transactions found.")
             return
-        # Group by status
         by_status: Dict[str, List[Transaction]] = {}
         for tx in txs:
             by_status.setdefault(tx.status or "unknown", []).append(tx)
@@ -644,8 +641,6 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 text_msg = (f"DB id: {tx.id}  Ref:{tx.ref}  Type:{(tx.type or '').upper()}  User:{tx.user_id}  Amount:{float(tx.amount):.2f}$  Created:{created}")
                 await update.message.reply_text(text_msg)
         return
-
-    # Default: user's own history
     limit = 50
     async with async_session() as session:
         result = await session.execute(select(Transaction).where(Transaction.user_id == user_id).order_by(Transaction.created_at.desc()).limit(limit))
@@ -661,7 +656,6 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = tx.status or "-"
         created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else "-"
         lines.append(f"Ref:{ref} | {ttype} | {amount} | {status} | {created}")
-    # send in chunks
     chunk_size = 20
     for i in range(0, len(lines), chunk_size):
         await update.message.reply_text("\n".join(lines[i:i+chunk_size]))
@@ -699,7 +693,7 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("No withdrawal wallet saved. Set it with /wallet <address> [network]")
 
-# Placeholder information and help
+# Information and help
 async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info_text = ("ℹ️ Information\n\nWelcome to AiCrypto bot.\n- Invest: deposit funds to provided wallet and upload proof (txid or screenshot). Admin will approve.\n- Withdraw: request withdrawals; admin will approve and process.")
     await update.message.reply_text(info_text)
@@ -756,6 +750,7 @@ def main():
     app.add_handler(CommandHandler("history", history_command))
     app.add_handler(CommandHandler("information", information_command))
     app.add_handler(CommandHandler("help", help_command))
+    # register the plain-text "Balance" fallback handler (was missing before)
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
     app.add_handler(CommandHandler("pending", admin_pending_command))
 
