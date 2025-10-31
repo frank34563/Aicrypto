@@ -1,9 +1,7 @@
-# Full patched bot.py — includes sa_update alias and fixed admin_callback_handler
+# Full patched bot.py — idempotent admin approvals/rejections, /pending lists,
+# added user/admin commands: /start, /balance, /invest, /withdraw, /wallet, /history, /information, /help
 # Ready to copy/paste and deploy.
-# - Persistent main menu, invest/withdraw flows, admin approve/reject, /pending
-# - ensure_columns() creates missing nullable columns at startup
-# - Uses sa_update to avoid shadowing telegram.Update 'update' param
-# Env: BOT_TOKEN, ADMIN_ID (int), MASTER_WALLET, MASTER_NETWORK, DATABASE_URL (optional)
+# NOTE: Keep your existing env vars (BOT_TOKEN, ADMIN_ID, MASTER_WALLET, MASTER_NETWORK, DATABASE_URL).
 
 import os
 import logging
@@ -181,7 +179,7 @@ async def log_transaction(session: AsyncSession, **data):
     await session.refresh(tx)
     return tx.id, data['ref']
 
-# States
+# Conversation states
 INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, WITHDRAW_CONFIRM = range(6)
 
 # UI helpers
@@ -503,7 +501,7 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
     context.user_data.pop('withdraw_network', None)
     return ConversationHandler.END
 
-# ---- ADMIN CALLBACKS ----
+# ---- ADMIN CALLBACKS (idempotent) ----
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -522,6 +520,12 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 if not tx:
                     await query.message.reply_text("Transaction not found.")
                     return
+
+                # enforce single approval/rejection: only allow if currently pending
+                if tx.status != 'pending':
+                    await query.message.reply_text(f"Transaction already processed (status: {tx.status}). No further action allowed.")
+                    return
+
                 if action == 'approve':
                     if tx.type == 'invest':
                         user = await get_user(session, tx.user_id)
@@ -579,7 +583,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
             pass
     return
 
-# ---- /pending admin command
+# ---- /pending admin command (lists pending deposits and withdrawals) ----
 def _is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID and ADMIN_ID != 0
 
@@ -594,13 +598,19 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
         if not pending:
             await update.message.reply_text("No pending transactions.")
             return
-        for tx in pending:
-            text_msg = (f"Pending DB id: {tx.id}  Ref: {tx.ref}\nType: {tx.type.upper()}\nUser: {tx.user_id}\nAmount: {float(tx.amount):.2f}$\n"
-                        f"Wallet: {tx.wallet or '-'}\nNetwork: {tx.network or '-'}\nProof: {tx.proof or '-'}\nCreated: {tx.created_at}")
-            try:
+        # group by type in output to be explicit
+        deposits = [tx for tx in pending if tx.type == 'invest']
+        withdraws = [tx for tx in pending if tx.type == 'withdraw']
+        if deposits:
+            await update.message.reply_text("Pending Deposits:")
+            for tx in deposits:
+                text_msg = (f"DB id: {tx.id}  Ref: {tx.ref}\nUser: {tx.user_id}\nAmount: {float(tx.amount):.2f}$\nProof: {tx.proof or '-'}\nCreated: {tx.created_at}")
                 await update.message.reply_text(text_msg, reply_markup=admin_action_kb(tx.id))
-            except Exception:
-                logger.exception("Failed to send pending tx to admin for tx %s", tx.id)
+        if withdraws:
+            await update.message.reply_text("Pending Withdrawals:")
+            for tx in withdraws:
+                text_msg = (f"DB id: {tx.id}  Ref: {tx.ref}\nUser: {tx.user_id}\nAmount: {float(tx.amount):.2f}$\nWallet: {tx.wallet or '-'}\nCreated: {tx.created_at}")
+                await update.message.reply_text(text_msg, reply_markup=admin_action_kb(tx.id))
 
 # Cancel helper
 async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE):
@@ -610,10 +620,56 @@ async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TY
         await update.callback_query.answer()
     return ConversationHandler.END
 
-# Balance text fallback
+# Balance text fallback and /balance command
 async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
         await send_balance_message(update.message, session, update.effective_user.id)
+
+async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with async_session() as session:
+        await send_balance_message(update.message, session, update.effective_user.id)
+
+# Wallet command: show or set wallet. /wallet shows saved wallet; /wallet <address> [network] sets it
+async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    args = context.args
+    if args:
+        # set wallet
+        wallet_address = args[0]
+        wallet_network = args[1] if len(args) > 1 else ''
+        async with async_session() as session:
+            await update_user(session, user_id, wallet_address=wallet_address, wallet_network=wallet_network)
+        await update.message.reply_text(f"Withdrawal wallet saved:\nWallet: <code>{wallet_address}</code>\nNetwork: {wallet_network}", parse_mode="HTML")
+    else:
+        async with async_session() as session:
+            user = await get_user(session, user_id)
+        wallet_address = user.get('wallet_address')
+        wallet_network = user.get('wallet_network')
+        if wallet_address:
+            await update.message.reply_text(f"Saved withdrawal wallet:\nWallet: <code>{wallet_address}</code>\nNetwork: {wallet_network}", parse_mode="HTML")
+        else:
+            await update.message.reply_text("No withdrawal wallet saved. Set it with /wallet <address> [network]")
+
+# Placeholder history, information, help commands
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🧾 History: coming soon.")
+
+async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    info_text = ("ℹ️ Information\n\nWelcome to AiCrypto bot.\n- Invest: deposit funds to provided wallet and upload proof (txid or screenshot). Admin will approve.\n- Withdraw: request withdrawals; admin will approve and process.")
+    await update.message.reply_text(info_text)
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = (
+        "/start - show Main Menu\n"
+        "/balance - show balance\n"
+        "/invest - start invest flow\n"
+        "/withdraw - start withdraw flow\n"
+        "/wallet - view/set withdrawal wallet\n"
+        "/history - view history (coming soon)\n"
+        "/information - bot information\n"
+        "/help - this message\n"
+    )
+    await update.message.reply_text(help_text)
 
 # === MAIN ===
 def main():
@@ -644,14 +700,20 @@ def main():
         allow_reentry=True,
     )
 
+    # register handlers in correct order
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern='^admin_(approve|reject)_\\d+$'))
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(CommandHandler("start", start_handler))
+    app.add_handler(CommandHandler("balance", balance_command))
+    app.add_handler(CommandHandler("wallet", wallet_command))
+    app.add_handler(CommandHandler("history", history_command))
+    app.add_handler(CommandHandler("information", information_command))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
-
     app.add_handler(CommandHandler("pending", admin_pending_command))
 
+    # quick start commands (redundant registrations for safety)
     app.add_handler(CommandHandler("invest", invest_cmd_handler))
     app.add_handler(CommandHandler("withdraw", withdraw_cmd_handler))
 
@@ -667,24 +729,10 @@ def main():
     logger.info("AiCrypto Bot STARTED")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-# Start & small helpers
+# Start helper
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL)
     await update.message.reply_text("Main Menu", reply_markup=kb)
-
-async def admin_approve_withdraw_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID or ADMIN_ID == 0:
-        await update.message.reply_text("Forbidden: admin only.")
-        return
-    await update.message.reply_text("Use inline approve/reject buttons sent to admin notifications.")
-
-async def admin_credit_invest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id != ADMIN_ID or ADMIN_ID == 0:
-        await update.message.reply_text("Forbidden: admin only.")
-        return
-    await update.message.reply_text("Use inline approve buttons in admin notifications to credit/approve invest requests.")
 
 if __name__ == '__main__':
     try:
