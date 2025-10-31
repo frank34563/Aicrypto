@@ -1,7 +1,9 @@
-# Full patched bot.py — idempotent admin approvals/rejections, /pending lists,
-# added user/admin commands: /start, /balance, /invest, /withdraw, /wallet, /history, /information, /help
-# Ready to copy/paste and deploy.
-# NOTE: Keep your existing env vars (BOT_TOKEN, ADMIN_ID, MASTER_WALLET, MASTER_NETWORK, DATABASE_URL).
+# Full patched bot.py — history now shows user's own transactions; admins can view all transactions with /history all
+# - Admin approve/reject remain idempotent (single action)
+# - /history for users returns their transactions (recent 50)
+# - /history all (admin only) returns all transactions (recent 200) grouped by status/type
+# - All previous flows and commands preserved
+# NOTE: set env vars BOT_TOKEN, ADMIN_ID (int), MASTER_WALLET, MASTER_NETWORK, DATABASE_URL (optional)
 
 import os
 import logging
@@ -254,7 +256,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with async_session() as session:
             await send_balance_message(query, session, query.from_user.id)
     elif data == "menu_history":
-        await query.edit_message_text("🧾 History (coming soon)", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+        # trigger user's history command
+        await history_command(update, context)
     elif data == "menu_referrals":
         user_id = query.from_user.id
         async with async_session() as session:
@@ -520,12 +523,9 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                 if not tx:
                     await query.message.reply_text("Transaction not found.")
                     return
-
-                # enforce single approval/rejection: only allow if currently pending
                 if tx.status != 'pending':
                     await query.message.reply_text(f"Transaction already processed (status: {tx.status}). No further action allowed.")
                     return
-
                 if action == 'approve':
                     if tx.type == 'invest':
                         user = await get_user(session, tx.user_id)
@@ -598,7 +598,6 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
         if not pending:
             await update.message.reply_text("No pending transactions.")
             return
-        # group by type in output to be explicit
         deposits = [tx for tx in pending if tx.type == 'invest']
         withdraws = [tx for tx in pending if tx.type == 'withdraw']
         if deposits:
@@ -612,6 +611,62 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
                 text_msg = (f"DB id: {tx.id}  Ref: {tx.ref}\nUser: {tx.user_id}\nAmount: {float(tx.amount):.2f}$\nWallet: {tx.wallet or '-'}\nCreated: {tx.created_at}")
                 await update.message.reply_text(text_msg, reply_markup=admin_action_kb(tx.id))
 
+# ---- HISTORY COMMAND (users & admin) ----
+async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /history -> shows the calling user's recent transactions (limit 50)
+    /history all -> admin-only: shows recent transactions across users (limit 200), grouped by type/status
+    """
+    user_id = update.effective_user.id
+    args = context.args if hasattr(context, "args") else []
+    is_admin = _is_admin(user_id)
+
+    # Admin request for all
+    if args and args[0].lower() == "all":
+        if not is_admin:
+            await update.message.reply_text("Forbidden: admin only.")
+            return
+        limit = 200
+        async with async_session() as session:
+            result = await session.execute(select(Transaction).order_by(Transaction.created_at.desc()).limit(limit))
+            txs: List[Transaction] = result.scalars().all()
+        if not txs:
+            await update.message.reply_text("No transactions found.")
+            return
+        # Group by status
+        by_status: Dict[str, List[Transaction]] = {}
+        for tx in txs:
+            by_status.setdefault(tx.status or "unknown", []).append(tx)
+        for status, group in by_status.items():
+            await update.message.reply_text(f"Status: {status} ({len(group)})")
+            for tx in group:
+                created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else "-"
+                text_msg = (f"DB id: {tx.id}  Ref:{tx.ref}  Type:{(tx.type or '').upper()}  User:{tx.user_id}  Amount:{float(tx.amount):.2f}$  Created:{created}")
+                await update.message.reply_text(text_msg)
+        return
+
+    # Default: user's own history
+    limit = 50
+    async with async_session() as session:
+        result = await session.execute(select(Transaction).where(Transaction.user_id == user_id).order_by(Transaction.created_at.desc()).limit(limit))
+        txs: List[Transaction] = result.scalars().all()
+    if not txs:
+        await update.message.reply_text("🧾 History: no transactions found.")
+        return
+    lines = []
+    for tx in txs:
+        ref = tx.ref or "-"
+        ttype = (tx.type or "").upper()
+        amount = f"{float(tx.amount):.2f}$" if tx.amount is not None else "-"
+        status = tx.status or "-"
+        created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else "-"
+        lines.append(f"Ref:{ref} | {ttype} | {amount} | {status} | {created}")
+    # send in chunks
+    chunk_size = 20
+    for i in range(0, len(lines), chunk_size):
+        await update.message.reply_text("\n".join(lines[i:i+chunk_size]))
+    return
+
 # Cancel helper
 async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE):
     if context and getattr(context, "user_data", None):
@@ -620,21 +675,15 @@ async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TY
         await update.callback_query.answer()
     return ConversationHandler.END
 
-# Balance text fallback and /balance command
-async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    async with async_session() as session:
-        await send_balance_message(update.message, session, update.effective_user.id)
-
+# Balance and wallet commands
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
         await send_balance_message(update.message, session, update.effective_user.id)
 
-# Wallet command: show or set wallet. /wallet shows saved wallet; /wallet <address> [network] sets it
 async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     args = context.args
     if args:
-        # set wallet
         wallet_address = args[0]
         wallet_network = args[1] if len(args) > 1 else ''
         async with async_session() as session:
@@ -650,10 +699,7 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("No withdrawal wallet saved. Set it with /wallet <address> [network]")
 
-# Placeholder history, information, help commands
-async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🧾 History: coming soon.")
-
+# Placeholder information and help
 async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     info_text = ("ℹ️ Information\n\nWelcome to AiCrypto bot.\n- Invest: deposit funds to provided wallet and upload proof (txid or screenshot). Admin will approve.\n- Withdraw: request withdrawals; admin will approve and process.")
     await update.message.reply_text(info_text)
@@ -665,7 +711,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/invest - start invest flow\n"
         "/withdraw - start withdraw flow\n"
         "/wallet - view/set withdrawal wallet\n"
-        "/history - view history (coming soon)\n"
+        "/history - view your transaction history\n"
+        "/history all - admin: view recent transactions system-wide\n"
         "/information - bot information\n"
         "/help - this message\n"
     )
@@ -700,7 +747,6 @@ def main():
         allow_reentry=True,
     )
 
-    # register handlers in correct order
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern='^admin_(approve|reject)_\\d+$'))
     app.add_handler(CallbackQueryHandler(menu_callback))
@@ -713,7 +759,6 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
     app.add_handler(CommandHandler("pending", admin_pending_command))
 
-    # quick start commands (redundant registrations for safety)
     app.add_handler(CommandHandler("invest", invest_cmd_handler))
     app.add_handler(CommandHandler("withdraw", withdraw_cmd_handler))
 
