@@ -457,13 +457,11 @@ async def admin_approve_withdraw(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("Transaction already completed.")
             return
         # Mark withdraw completed: reduce balance_in_process and (already deducted from balance earlier)
-        # In our flow, when withdraw requested we moved amount from balance -> balance_in_process.
         user = await get_user(session, tx.user_id)
         new_in_process = float(user['balance_in_process'] or 0) - float(tx.amount or 0)
         if new_in_process < 0:
             new_in_process = 0
         await update_user(session, tx.user_id, balance_in_process=new_in_process)
-        # update transaction status
         await session.execute(update(Transaction).where(Transaction.id == tx_id).values(status='completed'))
         await session.commit()
     await update.message.reply_text(f"Withdrawal transaction {tx_id} marked as completed.")
@@ -505,7 +503,7 @@ async def admin_credit_invest(update: Update, context: ContextTypes.DEFAULT_TYPE
         new_in_process = max(0.0, in_process - amount)
         new_balance = balance + amount
         await update_user(session, tx.user_id, balance=new_balance, balance_in_process=new_in_process,
-                          total_profit=float(user['total_profit'] or 0))  # total_profit unchanged here
+                          total_profit=float(user['total_profit'] or 0))
         await session.execute(update(Transaction).where(Transaction.id == tx_id).values(status='credited'))
         await session.commit()
     await update.message.reply_text(f"Investment transaction {tx_id} marked as credited and balance updated.")
