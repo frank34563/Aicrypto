@@ -1,6 +1,7 @@
-# Full patched bot.py — deposit flow asks for proof then asks user to confirm exact amount;
-# fixes menu Referral and Information handlers; keeps persistent menu, admin flows, /pending, ensure_columns.
-# Paste this into your bot.py and deploy.
+# Full patched bot.py — remove cancel after amount prompt, ask for screenshot/txid,
+# and ensure confirm button for deposit works correctly (with logs for debugging).
+# Includes persistent menu, invest/withdraw flows, admin approve/reject, /pending, ensure_columns.
+# Paste this into bot.py and deploy.
 
 import os
 import logging
@@ -216,9 +217,6 @@ def build_inline_menu(full_width: bool, support_url: Optional[str]):
     return InlineKeyboardMarkup(rows)
 
 # Confirm/Cancel keyboard helpers
-def user_cancel_kb():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⨉ Cancel", callback_data="user_cancel")]])
-
 def user_confirm_kb(prefix: str):
     # prefix: 'invest' -> invest_confirm_yes/invest_confirm_no
     return InlineKeyboardMarkup([[InlineKeyboardButton("✅ I sent the exact amount", callback_data=f"{prefix}_confirm_yes"),
@@ -269,32 +267,29 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with async_session() as session:
             await send_balance_message(query, session, query.from_user.id)
     elif data == "menu_history":
-        # Show history placeholder and keep menu present
         await query.edit_message_text("🧾 History (coming soon)", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
     elif data == "menu_referrals":
-        # Show referral info and referral link (referral code)
         user_id = query.from_user.id
         async with async_session() as session:
             ref = await get_user(session, user_id)
         ref_count = ref.get('referral_count', 0)
         ref_earn = float(ref.get('referral_earnings') or 0)
-        referral_link = f"https://t.me/{(await context.bot.get_me()).username}?start=ref_{user_id}"
+        # build referral link safely (bot username)
+        bot_username = (await context.bot.get_me()).username
+        referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
         text = (f"👥 Referrals\nCount: {ref_count}\nEarnings: {ref_earn:.2f}$\n"
                 f"Share your referral link to invite friends:\n{referral_link}")
         await query.edit_message_text(text, parse_mode="HTML", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
     elif data == "menu_settings":
-        # Provide settings options: currently only wallet setting - allow user to set withdrawal wallet
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("Set/Update Withdrawal Wallet", callback_data="settings_set_wallet")],
             [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]
         ])
         await query.edit_message_text("⚙️ Settings\nChoose an action:", reply_markup=kb)
     elif data == "settings_set_wallet":
-        # start wallet setup conversation: we reuse withdraw wallet state to capture wallet
         await query.message.reply_text("Send your withdrawal wallet address and optional network (e.g., <code>0xabc... ERC20</code>).", parse_mode="HTML")
         return
     elif data == "menu_info":
-        # Provide information text
         info_text = (
             "ℹ️ Information\n\n"
             "Welcome to AiCrypto bot.\n"
@@ -306,7 +301,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_help":
         await query.edit_message_text(f"❓ Help\nContact support: {SUPPORT_USER}", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
     else:
-        # unknown or handled elsewhere
         return
 
 # Send balance message helper
@@ -339,6 +333,11 @@ async def invest_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return INVEST_AMOUNT
 
 async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    After the user sends the amount we: - store it, - show the deposit wallet & network,
+    - and ask the user to upload a screenshot or send the txid.
+    We intentionally DO NOT show a cancel button here (as requested).
+    """
     text = (update.message.text or "").strip()
     try:
         amount = float(text)
@@ -350,8 +349,14 @@ async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_T
     amount = round(amount, 2)
     context.user_data['invest_amount'] = amount
 
-    wallet_msg = f"📥 Deposit {amount:.2f}$\nSend to wallet:\nWallet: <code>{MASTER_WALLET}</code>\nNetwork: <b>{MASTER_NETWORK}</b>\n\nAfter sending, upload a screenshot or send the txid. Then confirm you sent the exact amount."
-    await update.message.reply_text(wallet_msg, parse_mode="HTML", reply_markup=user_cancel_kb())
+    wallet_msg = (
+        f"📥 Deposit {amount:.2f}$\n"
+        f"Send to wallet:\nWallet: <code>{MASTER_WALLET}</code>\nNetwork: <b>{MASTER_NETWORK}</b>\n\n"
+        "After sending, upload a screenshot of the transaction OR send the transaction hash (txid)."
+    )
+    # IMPORTANT: no cancel button here per your request
+    await update.message.reply_text(wallet_msg, parse_mode="HTML")
+    # Next state: waiting for proof (photo or txid)
     return INVEST_PROOF
 
 async def invest_proof_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -380,6 +385,7 @@ async def invest_proof_received(update: Update, context: ContextTypes.DEFAULT_TY
 
     # store proof and show confirmation buttons
     context.user_data['invest_proof'] = proof_label
+
     await update.message.reply_text(
         f"Proof received: <code>{proof_label}</code>\n\nIf you have sent exactly {amount:.2f}$ to the provided wallet, press Confirm. Otherwise press Cancel.",
         parse_mode="HTML",
@@ -388,10 +394,14 @@ async def invest_proof_received(update: Update, context: ContextTypes.DEFAULT_TY
     return INVEST_CONFIRM
 
 async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle the confirmation callback from the user after they uploaded proof.
+    """
     query = update.callback_query
     await query.answer()
     data = query.data
     user_id = query.from_user.id
+    logger.info("invest_confirm_callback invoked for user %s with data=%s", user_id, data)
 
     if data == "invest_confirm_no":
         await query.message.reply_text("Investment cancelled.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
@@ -466,10 +476,10 @@ async def withdraw_amount_received(update: Update, context: ContextTypes.DEFAULT
     saved_wallet = user.get('wallet_address')
     saved_network = user.get('wallet_network')
     if saved_wallet:
-        await update.message.reply_text(f"Your saved wallet:\nWallet: <code>{saved_wallet}</code>\nNetwork: <b>{saved_network}</b>\n\nSend 'yes' to use it or send a new wallet and optional network.", parse_mode="HTML", reply_markup=user_cancel_kb())
+        await update.message.reply_text(f"Your saved wallet:\nWallet: <code>{saved_wallet}</code>\nNetwork: <b>{saved_network}</b>\n\nSend 'yes' to use it or send a new wallet and optional network.", parse_mode="HTML")
         return WITHDRAW_WALLET
     else:
-        await update.message.reply_text("No saved wallet. Send wallet address and optional network (e.g., <code>0xabc... ERC20</code>).", parse_mode="HTML", reply_markup=user_cancel_kb())
+        await update.message.reply_text("No saved wallet. Send wallet address and optional network (e.g., <code>0xabc... ERC20</code>).", parse_mode="HTML")
         return WITHDRAW_WALLET
 
 async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -482,7 +492,7 @@ async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT
         wallet_address = user.get('wallet_address')
         wallet_network = user.get('wallet_network')
         if not wallet_address:
-            await update.message.reply_text("No saved wallet found. Please send a wallet address and optional network.", reply_markup=user_cancel_kb())
+            await update.message.reply_text("No saved wallet found. Please send a wallet address and optional network.")
             return WITHDRAW_WALLET
     else:
         parts = text.split()
@@ -650,15 +660,13 @@ def main():
             INVEST_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, invest_amount_received)],
             INVEST_PROOF: [
                 MessageHandler(filters.PHOTO | (filters.TEXT & ~filters.COMMAND), invest_proof_received),
-                CallbackQueryHandler(lambda u,c: cancel_conv(u,c), pattern='^user_cancel$'),
             ],
             INVEST_CONFIRM: [
                 CallbackQueryHandler(invest_confirm_callback, pattern='^invest_confirm_yes$'),
                 CallbackQueryHandler(invest_confirm_callback, pattern='^invest_confirm_no$'),
             ],
             WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_amount_received)],
-            WITHDRAW_WALLET: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_wallet_received),
-                              CallbackQueryHandler(lambda u,c: cancel_conv(u,c), pattern='^user_cancel$')],
+            WITHDRAW_WALLET: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_wallet_received)],
             WITHDRAW_CONFIRM: [CallbackQueryHandler(withdraw_confirm_callback, pattern='^withdraw_confirm_yes$'),
                                CallbackQueryHandler(withdraw_confirm_callback, pattern='^withdraw_confirm_no$')],
         },
@@ -667,9 +675,9 @@ def main():
     )
 
     # Register handlers in correct order:
-    app.add_handler(conv_handler)  # conversation first so its CallbackQuery entry points get first shot
+    app.add_handler(conv_handler)  # conversation first so its CallbackQuery entry_points get first shot
     app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern='^admin_(approve|reject)_\\d+$'))
-    app.add_handler(CallbackQueryHandler(menu_callback))  # generic menu handler last
+    app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(CommandHandler("start", start_handler))
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
@@ -694,7 +702,7 @@ def main():
     scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     scheduler.start()
 
-    print("AiCrypto Bot STARTED")
+    logger.info("AiCrypto Bot STARTED")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 # Start & admin legacy handlers used above
