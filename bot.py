@@ -1,9 +1,6 @@
-# Full patched bot.py — complete file ready to copy/paste
-# - Includes the fixed withdraw_wallet_received that defends against None wallet_network and missing amount
-# - All previous features preserved: invest/withdraw flows, confirm buttons, admin approve/reject (idempotent),
-#   /pending, /history (user + admin all), /wallet command and settings flow, ensure_columns, 5-digit refs.
-# - Environment variables required: BOT_TOKEN, ADMIN_ID (int), MASTER_WALLET, MASTER_NETWORK, DATABASE_URL (optional)
-# Paste this file into your repository/container as bot.py and restart the service.
+# Full patched bot.py — includes the missing withdraw_confirm_callback definition and other previously added features.
+# Ready to copy/paste and deploy.
+# Env vars: BOT_TOKEN, ADMIN_ID (int), MASTER_WALLET, MASTER_NETWORK, DATABASE_URL (optional)
 
 import os
 import logging
@@ -403,46 +400,70 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     context.user_data.pop('invest_proof', None)
     return ConversationHandler.END
 
-# ---- WITHDRAW FLOW ----
-async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
-    return WITHDRAW_AMOUNT
+# ---- WITHDRAW FLOW continued: withdraw_confirm_callback definition included (was missing earlier) ----
+async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Callback handler for withdraw confirmation buttons.
+    This function existed previously but a NameError indicated it was missing at registration time.
+    This definition ensures it's available and behaves as expected.
+    """
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    if data != "withdraw_confirm_yes":
+        await query.message.reply_text("Withdrawal cancelled.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+        context.user_data.pop('withdraw_amount', None)
+        context.user_data.pop('withdraw_wallet', None)
+        return ConversationHandler.END
 
-async def withdraw_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
-    logger.info("Withdraw conversation started for user %s", update.effective_user.id)
-    return WITHDRAW_AMOUNT
+    user_id = query.from_user.id
+    amount = context.user_data.get('withdraw_amount')
+    wallet = context.user_data.get('withdraw_wallet')
+    network = context.user_data.get('withdraw_network', '')
 
-async def withdraw_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = (update.effective_message.text or "").strip()
-    try:
-        amount = float(text)
-        if amount <= 0:
-            raise ValueError()
-    except Exception:
-        await update.effective_message.reply_text("Invalid amount. Send a positive number like 50 or 25.75, or /cancel.")
-        return WITHDRAW_AMOUNT
-    amount = round(amount, 2)
-    user_id = update.effective_user.id
+    if amount is None or wallet is None:
+        await query.message.reply_text("Missing data. Start withdrawal again.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+        return ConversationHandler.END
+
     async with async_session() as session:
         user = await get_user(session, user_id)
-    balance = float(user['balance'] or 0)
-    if amount > balance:
-        await update.effective_message.reply_text(f"Insufficient balance. Your available balance is {balance:.2f}$. Enter a smaller amount or /cancel.")
-        return WITHDRAW_AMOUNT
-    context.user_data['withdraw_amount'] = amount
-    saved_wallet = user.get('wallet_address')
-    saved_network = user.get('wallet_network')
-    if saved_wallet:
-        await update.effective_message.reply_text(f"Your saved wallet:\nWallet: <code>{saved_wallet}</code>\nNetwork: <b>{saved_network}</b>\n\nSend 'yes' to use it or send a new wallet and optional network.", parse_mode="HTML")
-        return WITHDRAW_WALLET
-    else:
-        await update.effective_message.reply_text("No saved wallet. Send wallet address and optional network (e.g., <code>0xabc... ERC20</code>).", parse_mode="HTML")
-        return WITHDRAW_WALLET
+        balance = float(user['balance'] or 0)
+        if amount > balance:
+            await query.message.reply_text(f"Insufficient balance ({balance:.2f}$). Withdrawal aborted.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+            context.user_data.pop('withdraw_amount', None)
+            context.user_data.pop('withdraw_wallet', None)
+            return ConversationHandler.END
 
-# ---- FIXED FUNCTION: withdraw_wallet_received ----
+        new_balance = balance - amount
+        new_in_process = float(user['balance_in_process'] or 0) + amount
+        await update_user(session, user_id, balance=new_balance, balance_in_process=new_in_process)
+
+        tx_db_id, tx_ref = await log_transaction(session,
+                                      user_id=user_id,
+                                      ref=None,
+                                      type='withdraw',
+                                      amount=amount,
+                                      status='pending',
+                                      proof='',
+                                      wallet=wallet,
+                                      network=network,
+                                      created_at=datetime.utcnow())
+
+    await query.message.reply_text(f"✅ Withdrawal request #{tx_ref} submitted and is pending admin approval.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+
+    admin_text = f"New WITHDRAW request #{tx_db_id} (ref {tx_ref})\nUser: {user_id}\nAmount: {amount:.2f}$\nWallet: {wallet}\nNetwork: {network}"
+    try:
+        if ADMIN_ID and ADMIN_ID != 0:
+            await context.application.bot.send_message(chat_id=ADMIN_ID, text=admin_text, reply_markup=admin_action_kb(tx_db_id))
+    except Exception:
+        logger.exception("Failed to notify admin for withdraw")
+
+    context.user_data.pop('withdraw_amount', None)
+    context.user_data.pop('withdraw_wallet', None)
+    context.user_data.pop('withdraw_network', None)
+    return ConversationHandler.END
+
+# ---- FIXED FUNCTION: withdraw_wallet_received (ensures wallet_network None safe and amount exists) ----
 async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handles wallet input for withdrawal or settings flow.
