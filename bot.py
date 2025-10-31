@@ -187,17 +187,37 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance))
     # Add other handlers as needed...
 
-    scheduler = AsyncIOScheduler()
+    # Create and set an event loop for this thread (fixes RuntimeError on Python >=3.10)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    # Create AsyncIOScheduler and, for clarity, pass the loop explicitly if supported
+    try:
+        # Newer versions accept event_loop parameter name; keep fallback to default ctor
+        scheduler = AsyncIOScheduler(event_loop=loop)
+    except TypeError:
+        scheduler = AsyncIOScheduler()
+
     scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     scheduler.start()
 
     print("AiCrypto Bot STARTED – SQLAlchemy 2.0 + Python 3.13")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        # Run the bot's polling in the existing loop
+        # Application.run_polling will internally run the loop; to ensure the scheduler's loop is used,
+        # run the polling in the same thread (run_polling is blocking and will use the current loop in this setup).
+        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    finally:
+        # Ensure clean shutdown if termination occurs
+        try:
+            scheduler.shutdown(wait=False)
+        except Exception:
+            pass
+        try:
+            loop.stop()
+            loop.close()
+        except Exception:
+            pass
 
 if __name__ == '__main__':
     main()
-
-
-
-
-
