@@ -87,10 +87,50 @@ class Transaction(Base):
 
 # Init DB
 import asyncio
-async def init_db():
+async def _create_all_with_timeout(engine, timeout=10):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-asyncio.run(init_db())
+
+
+async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bool = True):
+    last_exc = None
+    attempt = 0
+    current_engine = engine
+
+    while attempt < retries:
+        attempt += 1
+        try:
+            await _create_all_with_timeout(current_engine)
+            logger.info("Database initialized successfully.")
+            return
+        except Exception as e:
+            last_exc = e
+            logger.warning("Database init attempt %d/%d failed: %s", attempt, retries, e)
+            wait = backoff * (2 ** (attempt - 1))
+            logger.info("Waiting %.1f seconds before next DB init attempt...", wait)
+            await asyncio.sleep(wait)
+
+    logger.error("All %d database init attempts failed. Last error: %s", retries, last_exc)
+
+    if fallback_to_sqlite:
+        try:
+            sqlite_url = "sqlite+aiosqlite:///bot_fallback.db"
+            logger.warning("Falling back to sqlite DB at %s for local/dev (NOT recommended for production).", sqlite_url)
+            from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
+            global engine, async_session, DATABASE_URL
+            DATABASE_URL = sqlite_url
+            engine = _create_async_engine(DATABASE_URL, echo=False, future=True)
+            async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+            await _create_all_with_timeout(engine)
+            logger.info("Fallback sqlite database initialized. Bot will continue using sqlite.")
+            return
+        except Exception as e2:
+            logger.exception("Fallback to sqlite failed: %s", e2)
+
+    logger.critical("Unable to initialize database and fallback failed — exiting.")
+    await asyncio.sleep(0.1)
+    import sys
+    sys.exit(1)
 
 # === HELPERS ===
 async def get_user(session: AsyncSession, user_id: int) -> Dict:
@@ -116,7 +156,6 @@ async def log_transaction(session: AsyncSession, **data):
 
 # === MENUS ===
 def build_inline_menu(full_width: bool = False) -> InlineKeyboardMarkup:
-    # full_width=True => single-button rows (like screenshot 2)
     if full_width:
         rows = [
             [InlineKeyboardButton("Balance", callback_data="menu_balance")],
@@ -162,7 +201,7 @@ async def daily_profit_job():
                     referral_earnings=ref['referral_earnings'] + bonus,
                     balance=ref['balance'] + bonus
                 )
-                await log_transaction(session, user_id=user.referrer_id, type='referral_profit', amount=bonus, status='credited')
+                await log_transaction(session, user.referrer_id, type='referral_profit', amount=bonus, status='credited')
 
 # === HANDLERS ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -181,7 +220,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         else:
             await update.message.reply_text("Welcome to AiCrypto!")
-        # send an inline keyboard instead of the reply keyboard
         kb = build_inline_menu(full_width=False)
         await update.message.reply_text("Choose:", reply_markup=kb)
 
@@ -196,19 +234,15 @@ Referral Earnings: {user['referral_earnings']:.2f}$
 
 Manager: {SUPPORT_USER}
     """.strip()
-    # query_or_message can be a CallbackQuery or Message; handle accordingly
     try:
-        # if CallbackQuery: edit original message
         await query_or_message.edit_message_text(msg, reply_markup=build_inline_menu(full_width=True))
     except Exception:
-        # otherwise send a new message
         await query_or_message.reply_text(msg, reply_markup=build_inline_menu(full_width=True))
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Handles callback queries for the inline menu
     query = update.callback_query
     data = query.data
-    await query.answer()  # stop loading spinner on client
+    await query.answer()
 
     async with async_session() as session:
         if data == "menu_balance":
@@ -242,7 +276,6 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(menu_callback))
-    # Keep a message handler so typing "Balance" still works for users
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
     # Add other handlers as needed...
 
@@ -275,4 +308,13 @@ def main():
             pass
 
 if __name__ == '__main__':
+    # Initialize DB before starting the bot
+    try:
+        asyncio.run(init_db(retries=5, backoff=2.0, fallback_to_sqlite=True))
+    except SystemExit:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected error during DB initialization: %s", e)
+        raise
+
     main()
