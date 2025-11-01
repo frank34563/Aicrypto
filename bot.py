@@ -1,6 +1,9 @@
-# Full final bot.py — Reply keyboard on /start removed.
-# History buttons show only DATE | AMOUNT | TYPE and details include Back/Exit.
-# Referral "Copy Link" uses switch_inline_query_current_chat and leaves the referral link message in chat.
+# Full final bot.py — Combined updates:
+# - Inline main menu (no reply keyboard) with optional two-column "full" UI
+# - Referral "Copy Link" button uses switch_inline_query_current_chat and leaves link message in chat
+# - History: buttons show DATE | AMOUNT | TYPE, with Prev/Next/Exit, and details include Back/Exit
+# - invest_confirm_callback sends a Deposit Request Successful message
+# - admin_confirm_callback sends a Deposit Receipt when an invest is approved
 #
 # Environment variables required:
 # - BOT_TOKEN (required)
@@ -14,7 +17,7 @@ import os
 import logging
 import random
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional, List, Tuple
 from dotenv import load_dotenv
 
@@ -57,7 +60,9 @@ MASTER_NETWORK = os.getenv('MASTER_NETWORK', 'TRC20')
 SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
 SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else None)
 
-MENU_FULL_WIDTH = os.getenv('MENU_FULL_WIDTH', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+# Set this to True to use the padded 2-column "full" menu look
+MENU_FULL_TWO_COLUMN = os.getenv('MENU_FULL_TWO_COLUMN', 'true').lower() in ('1','true','yes','on')
+
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 logging.basicConfig(level=logging.INFO)
@@ -81,12 +86,12 @@ async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False
 class User(Base):
     __tablename__ = 'users'
     id = Column(BigInteger, primary_key=True)
-    balance = Column(Numeric(15, 2), default=0.0)
-    balance_in_process = Column(Numeric(15, 2), default=0.0)
-    daily_profit = Column(Numeric(15, 2), default=0.0)
-    total_profit = Column(Numeric(15, 2), default=0.0)
+    balance = Column(Numeric(18, 2), default=0.0)
+    balance_in_process = Column(Numeric(18, 2), default=0.0)
+    daily_profit = Column(Numeric(18, 2), default=0.0)
+    total_profit = Column(Numeric(18, 2), default=0.0)
     referral_count = Column(Integer, default=0)
-    referral_earnings = Column(Numeric(15, 2), default=0.0)
+    referral_earnings = Column(Numeric(18, 2), default=0.0)
     referrer_id = Column(BigInteger, nullable=True)
     wallet_address = Column(String)
     wallet_network = Column(String)
@@ -99,7 +104,7 @@ class Transaction(Base):
     user_id = Column(BigInteger)
     ref = Column(String)            # random 5-digit reference
     type = Column(String)           # 'invest' or 'withdraw' or 'profit'
-    amount = Column(Numeric(15, 2))
+    amount = Column(Numeric(18, 2))
     status = Column(String)         # 'pending','credited','rejected','completed'
     proof = Column(String)          # txid or file_id (format: 'photo:<file_id>' for photos)
     wallet = Column(String)
@@ -116,11 +121,16 @@ async def _create_all_with_timeout(engine_to_use):
 
 async def ensure_columns():
     async with engine.begin() as conn:
-        await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_network VARCHAR"))
-        await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS proof VARCHAR"))
-        await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS wallet VARCHAR"))
-        await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS network VARCHAR"))
-        await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS ref VARCHAR"))
+        # Some DBs (like sqlite) may ignore ALTER IF NOT EXISTS syntax; keep best-effort
+        try:
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_network VARCHAR"))
+            await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS proof VARCHAR"))
+            await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS wallet VARCHAR"))
+            await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS network VARCHAR"))
+            await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS ref VARCHAR"))
+        except Exception:
+            # ignore if DB doesn't support IF NOT EXISTS in ALTER
+            pass
 
 async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bool = True):
     global engine, async_session, DATABASE_URL
@@ -192,22 +202,59 @@ async def log_transaction(session: AsyncSession, **data):
 # Conversation states
 INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, WITHDRAW_CONFIRM, HISTORY_PAGE, HISTORY_DETAILS = range(8)
 
+# -----------------------
 # UI helpers and validation
-def build_main_menu_keyboard(full_width: bool = MENU_FULL_WIDTH) -> InlineKeyboardMarkup:
+# -----------------------
+
+ZWSP = "\u200b"
+
+def _pad_label_for_full_width(label: str, target_chars: int = 18) -> str:
+    plain = label.replace(ZWSP, "")
+    if len(plain) >= target_chars:
+        return label
+    needed = target_chars - len(plain)
+    left = needed // 2
+    right = needed - left
+    return (" " * left) + label + (" " * right) + ZWSP
+
+def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN) -> InlineKeyboardMarkup:
+    if not full_two_column:
+        rows = []
+        rows.append([InlineKeyboardButton("💰 Balance", callback_data="menu_balance"),
+                     InlineKeyboardButton("📈 Invest", callback_data="menu_invest")])
+        rows.append([InlineKeyboardButton("🧾 History", callback_data="menu_history"),
+                     InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")])
+        rows.append([InlineKeyboardButton("👥 Referrals", callback_data="menu_referrals"),
+                     InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")])
+        rows.append([InlineKeyboardButton("ℹ️ Information", callback_data="menu_info"),
+                     InlineKeyboardButton("❓ Help", url=SUPPORT_URL if SUPPORT_URL else "https://t.me/")])
+        rows.append([InlineKeyboardButton("⨉ Exit", callback_data="menu_exit")])
+        return InlineKeyboardMarkup(rows)
+
+    tlen = 18
+    left_right = [
+        ("💰 Balance", "menu_balance", "📈 Invest", "menu_invest"),
+        ("🧾 History", "menu_history", "💸 Withdraw", "menu_withdraw"),
+        ("👥 Referrals", "menu_referrals", "⚙️ Settings", "menu_settings"),
+        ("ℹ️ Information", "menu_info", "❓ Help", "menu_help_url"),
+    ]
+
     rows = []
-    rows.append([InlineKeyboardButton("💰 Balance", callback_data="menu_balance"),
-                 InlineKeyboardButton("📈 Invest", callback_data="menu_invest")])
-    rows.append([InlineKeyboardButton("🧾 History", callback_data="menu_history"),
-                 InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")])
-    rows.append([InlineKeyboardButton("👥 Referrals", callback_data="menu_referrals"),
-                 InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")])
-    rows.append([InlineKeyboardButton("ℹ️ Information", callback_data="menu_info"),
-                 InlineKeyboardButton("❓ Help", url=SUPPORT_URL if SUPPORT_URL else "https://t.me/")])
-    rows.append([InlineKeyboardButton("⨉ Exit", callback_data="menu_exit")])
+    for l_label, l_cb, r_label, r_cb in left_right:
+        l = _pad_label_for_full_width(l_label, target_chars=tlen)
+        r = _pad_label_for_full_width(r_label, target_chars=tlen)
+        left_btn = InlineKeyboardButton(l, callback_data=l_cb)
+        if r_cb == "menu_help_url":
+            right_btn = InlineKeyboardButton(r, url=SUPPORT_URL if SUPPORT_URL else "https://t.me/")
+        else:
+            right_btn = InlineKeyboardButton(r, callback_data=r_cb)
+        rows.append([left_btn, right_btn])
+
+    exit_label = _pad_label_for_full_width("⨉ Exit", target_chars=(tlen*2)//2)
+    rows.append([InlineKeyboardButton(exit_label, callback_data="menu_exit")])
     return InlineKeyboardMarkup(rows)
 
 def build_reply_shortcuts():
-    # function kept for backward-compatibility but not used on /start (keyboard removed per request)
     kb = [
         [KeyboardButton("/balance"), KeyboardButton("/invest")],
         [KeyboardButton("/withdraw"), KeyboardButton("/history")],
@@ -215,7 +262,9 @@ def build_reply_shortcuts():
     return ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=False)
 
 def is_probable_wallet(address: str) -> bool:
-    address = address.strip()
+    address = (address or "").strip()
+    if not address:
+        return False
     if address.startswith("0x") and len(address) >= 40 and re.match(r"^0x[0-9a-fA-F]+$", address):
         return True
     if address.startswith("T") and 25 <= len(address) <= 35:
@@ -236,19 +285,15 @@ def tx_card_text(tx: Transaction) -> str:
             f"Status: <b>{(tx.status or '').upper()}</b>\n"
             f"Created: {created}\n")
 
-def admin_confirm_kb(action: str, tx_db_id: int):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Yes", callback_data=f"admin_confirm_{action}_{tx_db_id}"),
-         InlineKeyboardButton("❌ No", callback_data=f"admin_cancel_{tx_db_id}")]
-    ])
+def _utc_to_pdt_str(dt: datetime) -> str:
+    # PDT = UTC-7, ignoring DST changes for simplicity; user asked for (PDT) in samples
+    pdt = dt.replace(tzinfo=timezone.utc) - timedelta(hours=7)
+    return pdt.strftime("%Y-%m-%d %H:%M (PDT)")
 
-def admin_action_kb(tx_db_id: int):
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Approve", callback_data=f"admin_start_approve_{tx_db_id}"),
-         InlineKeyboardButton("❌ Reject", callback_data=f"admin_start_reject_{tx_db_id}")]
-    ])
+# -----------------------
+# Messaging and admin helpers
+# -----------------------
 
-# Messaging helpers
 async def send_admin_tx_notification(bot, tx: Transaction, proof_file_id: Optional[str] = None):
     text = tx_card_text(tx)
     try:
@@ -269,9 +314,24 @@ async def post_admin_log(bot, message: str):
         except Exception:
             logger.exception("Failed to post admin log")
 
-# DAILY PROFIT JOB (ensure defined)
+def admin_confirm_kb(action: str, tx_db_id: int):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Yes", callback_data=f"admin_confirm_{action}_{tx_db_id}"),
+         InlineKeyboardButton("❌ No", callback_data=f"admin_cancel_{tx_db_id}")]
+    ])
+
+def admin_action_kb(tx_db_id: int):
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Approve", callback_data=f"admin_start_approve_{tx_db_id}"),
+         InlineKeyboardButton("❌ Reject", callback_data=f"admin_start_reject_{tx_db_id}")]
+    ])
+
+# -----------------------
+# DAILY PROFIT JOB
+# -----------------------
+
 async def daily_profit_job():
-    PROFIT_RATE = 0.015  # 1.5% daily
+    PROFIT_RATE = 0.015  # 1.5% daily example
     async with async_session() as session:
         result = await session.execute(select(User))
         users = result.scalars().all()
@@ -289,15 +349,17 @@ async def daily_profit_job():
             except Exception:
                 logger.exception("daily_profit_job: failed for user %s", getattr(user, "id", "<unknown>"))
 
+# -----------------------
 # Menu callback handler
+# -----------------------
+
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    data = query.data if query else None
     if query:
         await query.answer()
+    data = query.data if query else None
     if not data:
         return
-    # Let ConversationHandler handle invest/withdraw entrypoints and admin_* callbacks
     if data in ("menu_invest", "menu_withdraw") or data.startswith("admin_"):
         return
     if data == "menu_exit":
@@ -313,20 +375,15 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_history":
         await history_command(update, context)
     elif data == "menu_referrals":
-        # Send a separate message containing the referral link (so it remains in chat)
-        # and provide a single "Copy Link" button that inserts the link into the current chat input.
         user_id = query.from_user.id
         bot_username = (await context.bot.get_me()).username
         referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
-        # Message text with code block of the link so user can copy later
         text = (f"👥 Referrals\n\nShare this link to invite friends and earn rewards:\n\n"
-                f"<code>{referral_link}</code>\n\nUse the button below to paste the link into your input field for quick copying/sharing.")
-        # Use switch_inline_query_current_chat so Telegram inserts the link into the user's input field when they tap the button.
+                f"<code>{referral_link}</code>\n\nUse the button below to insert the link into your input field for quick copying/sharing.")
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🔗 Copy Link", switch_inline_query_current_chat=referral_link)],
             [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]
         ])
-        # Send a new message (reply to the menu message) so it stays in chat. Then leave the menu message unchanged; the Back button will edit the menu message back to Main Menu.
         try:
             await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
         except Exception:
@@ -343,7 +400,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return
 
+# -----------------------
 # Balance helper
+# -----------------------
+
 async def send_balance_message(query_or_message, session: AsyncSession, user_id: int):
     user = await get_user(session, user_id)
     msg = (f"💎 <b>Your Balance</b>\n"
@@ -360,7 +420,10 @@ async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     async with async_session() as session:
         await send_balance_message(update.effective_message, session, update.effective_user.id)
 
-# INVEST FLOW
+# -----------------------
+# INVEST FLOW (user-facing)
+# -----------------------
+
 async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.", reply_markup=None)
     return INVEST_AMOUNT
@@ -414,37 +477,73 @@ async def invest_proof_received(update: Update, context: ContextTypes.DEFAULT_TY
     )
     return INVEST_CONFIRM
 
+# This handler creates the pending transaction and sends the "Deposit Request Successful" message
 async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
-    data = query.data
-    user_id = query.from_user.id
-    if data == "invest_confirm_no":
-        await query.message.reply_text("Investment cancelled.", reply_markup=build_main_menu_keyboard())
-        context.user_data.pop('invest_amount', None)
-        context.user_data.pop('invest_proof', None)
-        return ConversationHandler.END
+    if query:
+        await query.answer()
+    user_id = query.from_user.id if query else update.effective_user.id
     amount = context.user_data.get('invest_amount')
     proof = context.user_data.get('invest_proof')
     if amount is None or proof is None:
-        await query.message.reply_text("Missing data. Restart invest flow.", reply_markup=build_main_menu_keyboard())
+        target = query.message if query else update.effective_message
+        await target.reply_text("Missing data. Restart invest flow.", reply_markup=build_main_menu_keyboard())
+        context.user_data.pop('invest_amount', None)
+        context.user_data.pop('invest_proof', None)
         return ConversationHandler.END
+
     async with async_session() as session:
-        tx_db_id, tx_ref = await log_transaction(session, user_id=user_id, ref=None, type='invest', amount=amount, status='pending', proof=str(proof), wallet=MASTER_WALLET, network=MASTER_NETWORK, created_at=datetime.utcnow())
-    steps = ("1️⃣ Proof received — processing on blockchain\n"
-             "2️⃣ Admin review pending\n"
-             "3️⃣ On approval your investment will start")
-    await query.message.reply_text(f"✅ Proof received. Reference: <b>{tx_ref}</b>\n\n{steps}", parse_mode="HTML", reply_markup=build_main_menu_keyboard())
+        tx_db_id, tx_ref = await log_transaction(
+            session,
+            user_id=user_id,
+            ref=None,
+            type='invest',
+            amount=amount,
+            status='pending',
+            proof=str(proof),
+            wallet=MASTER_WALLET,
+            network=MASTER_NETWORK,
+            created_at=datetime.utcnow()
+        )
+
+    # Format deposit request message as requested, using D-{ref}
+    now = datetime.utcnow()
+    pdt_str = _utc_to_pdt_str(now)
+    deposit_request_text = (
+        "🧾 Deposit Request Successful\n"
+        f"Transaction ID, D-{tx_ref}\n"
+        f"Amount, {amount:.2f} USDT ({MASTER_NETWORK})\n"
+        f"Wallet, {MASTER_WALLET}\n"
+        f"Network, {MASTER_NETWORK}\n"
+        f"Status: Pending Approval\n"
+        f"Date: {pdt_str}\n\n"
+        "Once confirmed, your balance will be updated automatically."
+    )
+
+    try:
+        # reply to the menu message if available, otherwise send new message
+        if query:
+            await query.message.reply_text(deposit_request_text, parse_mode="HTML")
+        else:
+            await update.effective_message.reply_text(deposit_request_text, parse_mode="HTML")
+    except Exception:
+        logger.exception("Failed to send deposit request message to user %s", user_id)
+
+    # notify admin
     async with async_session() as session:
         result = await session.execute(select(Transaction).where(Transaction.id == tx_db_id))
         tx = result.scalar_one_or_none()
     await send_admin_tx_notification(context.application.bot, tx, proof_file_id=proof)
     await post_admin_log(context.application.bot, f"New INVEST #{tx_db_id} ref {tx_ref} user {user_id} amount {amount:.2f}$")
+
     context.user_data.pop('invest_amount', None)
     context.user_data.pop('invest_proof', None)
     return ConversationHandler.END
 
-# WITHDRAW FLOW
+# -----------------------
+# WITHDRAW FLOW and other existing handlers remain unchanged
+# -----------------------
+
 async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("💸 Enter the amount you want to withdraw (numbers only). Send /cancel to abort.")
     return WITHDRAW_AMOUNT
@@ -488,7 +587,6 @@ async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT
     msg = update.effective_message
     user_id = update.effective_user.id
 
-    # handle callback (use saved)
     if update.callback_query and update.callback_query.data == "withdraw_use_saved":
         await update.callback_query.answer()
         async with async_session() as session:
@@ -566,7 +664,13 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
     context.user_data.pop('withdraw_network', None)
     return ConversationHandler.END
 
-# ADMIN flows with confirmation steps
+# -----------------------
+# ADMIN flows (modified to send deposit receipt on approval)
+# -----------------------
+
+def _is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID and ADMIN_ID != 0
+
 async def admin_start_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -605,12 +709,24 @@ async def admin_confirm_callback(update: Update, context: ContextTypes.DEFAULT_T
                 await update_user(session, tx.user_id, balance=new_balance)
                 await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='credited'))
                 await session.commit()
-                await query.message.reply_text(f"Invest #{tx_db_id} credited.")
+
+                # Send deposit receipt in requested format (using PDT)
+                receipt_text = (
+                    "  **Deposit Receipt **\n"
+                    "✅ Your deposit has been approved and credited\n"
+                    f"Transaction ID, D-{tx.ref}\n"
+                    f"Amount, {float(tx.amount):.2f} USDT\n"
+                    f"Date, {_utc_to_pdt_str(datetime.utcnow())}\n"
+                    f"New balance: ${new_balance:.2f}"
+                )
                 try:
-                    await context.application.bot.send_message(chat_id=tx.user_id, text=f"✅ Your deposit (ref {tx.ref}) approved. Amount credited: {float(tx.amount):.2f}$.")
+                    await context.application.bot.send_message(chat_id=tx.user_id, text=receipt_text, parse_mode="HTML")
                 except Exception:
                     logger.exception("Notify user fail invest approve")
+
+                await query.message.reply_text(f"Invest #{tx_db_id} credited.")
                 await post_admin_log(context.application.bot, f"Admin approved INVEST #{tx_db_id} ref {tx.ref}")
+
             elif tx.type == 'withdraw':
                 user = await get_user(session, tx.user_id)
                 new_in_process = max(0.0, float(user.get('balance_in_process') or 0) - float(tx.amount or 0))
@@ -623,15 +739,17 @@ async def admin_confirm_callback(update: Update, context: ContextTypes.DEFAULT_T
                 except Exception:
                     logger.exception("Notify user fail withdraw complete")
                 await post_admin_log(context.application.bot, f"Admin approved WITHDRAW #{tx_db_id} ref {tx.ref}")
+
         else:
+            # reject
             if tx.type == 'invest':
                 await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='rejected'))
                 await session.commit()
-                await query.message.reply_text(f"Invest #{tx_db_id} rejected.")
                 try:
-                    await context.application.bot.send_message(chat_id=tx.user_id, text=f"❌ Your deposit (ref {tx.ref}) was rejected by admin.")
+                    await context.application.bot.send_message(chat_id=tx.user_id, text=f"❌ Your deposit (ref D-{tx.ref}) was rejected by admin.")
                 except Exception:
                     logger.exception("Notify user invest reject fail")
+                await query.message.reply_text(f"Invest #{tx_db_id} rejected.")
                 await post_admin_log(context.application.bot, f"Admin rejected INVEST #{tx_db_id} ref {tx.ref}")
             elif tx.type == 'withdraw':
                 user = await get_user(session, tx.user_id)
@@ -640,12 +758,13 @@ async def admin_confirm_callback(update: Update, context: ContextTypes.DEFAULT_T
                 await update_user(session, tx.user_id, balance=new_balance, balance_in_process=new_in_process)
                 await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='rejected'))
                 await session.commit()
-                await query.message.reply_text(f"Withdraw #{tx_db_id} rejected and funds restored.")
                 try:
                     await context.application.bot.send_message(chat_id=tx.user_id, text=f"❌ Your withdrawal (ref {tx.ref}) was rejected by admin. Funds restored.")
                 except Exception:
                     logger.exception("Notify user withdraw reject fail")
+                await query.message.reply_text(f"Withdraw #{tx_db_id} rejected and funds restored.")
                 await post_admin_log(context.application.bot, f"Admin rejected WITHDRAW #{tx_db_id} ref {tx.ref}")
+
     return
 
 async def admin_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -653,9 +772,9 @@ async def admin_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.answer()
     await query.message.reply_text("Action cancelled.")
 
-# /pending
-def _is_admin(user_id: int) -> bool:
-    return user_id == ADMIN_ID and ADMIN_ID != 0
+# -----------------------
+# Admin pending list
+# -----------------------
 
 async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ef_msg = update.effective_message
@@ -681,13 +800,11 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception:
             logger.exception("Failed to send pending tx %s to admin", tx.id)
 
-# -------------------------
-# HISTORY: buttons show only DATE | AMOUNT | TYPE (one button per tx)
-# Details view includes Back to History and Exit to Main Menu
-# -------------------------
+# -----------------------
+# HISTORY handlers
+# -----------------------
 
 def history_list_item_text(tx: Transaction) -> str:
-    """Return compact single-line text for a history list item: DATE | AMOUNT | TYPE"""
     created = tx.created_at.strftime("%Y-%m-%d") if tx.created_at else "-"
     ttype_raw = (tx.type or "").lower()
     if ttype_raw.startswith("with"):
@@ -705,7 +822,6 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args if hasattr(context, "args") else []
     is_admin = _is_admin(user_id)
 
-    # admin 'all' behavior unchanged
     if args and args[0].lower() == "all":
         if not is_admin:
             await ef_msg.reply_text("Forbidden: admin only.")
@@ -725,7 +841,6 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await ef_msg.reply_text("\n".join(lines[i:i+50]))
         return
 
-    # Default: user's transactions (paginated)
     page = 1
     if args and args[0].isdigit():
         page = max(1, int(args[0]))
@@ -742,32 +857,26 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start = (page-1)*per_page
     page_items = txs[start:start+per_page]
 
-    # Build only buttons (each button label = "DATE | AMOUNT | TYPE")
     kb_rows = []
     for tx in page_items:
-        # callback_data includes tx.id, page, owner_id so details view can provide Back button
         kb_rows.append([InlineKeyboardButton(history_list_item_text(tx), callback_data=f"history_details_{tx.id}_{page}_{user_id}")])
 
-    # Prev/Next navigation row + Exit (back to main menu)
     nav = []
     if page > 1:
         nav.append(InlineKeyboardButton("⬅ Prev", callback_data=f"history_page_{page-1}_{user_id}"))
     if page < total_pages:
         nav.append(InlineKeyboardButton("Next ➡", callback_data=f"history_page_{page+1}_{user_id}"))
-    # Exit to main menu
     nav.append(InlineKeyboardButton("Exit ❌", callback_data="menu_exit"))
     if nav:
         kb_rows.append(nav)
 
     header = f"🧾 Transactions (page {page}/{total_pages}) — Tap an item for details\n\n"
-    # send header + keyboard only (no long textual list)
     await ef_msg.reply_text(header, reply_markup=InlineKeyboardMarkup(kb_rows))
 
 async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data
-    parts = data.split("_")
+    parts = query.data.split("_")
     if len(parts) < 4:
         await query.message.reply_text("Invalid pagination data.")
         return
@@ -780,26 +889,16 @@ async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await history_command(update, context)
 
 async def history_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Expects callback_data format: history_details_{tx_id}_{page}_{user_id}
-    So the details view can include a Back button returning to that page for that user.
-    """
     query = update.callback_query
     await query.answer()
-    data = query.data
-    parts = data.split("_")
+    parts = query.data.split("_")
     if len(parts) < 5:
         await query.message.reply_text("Invalid details callback.")
         return
-    try:
-        tx_db_id = int(parts[2])
-        page = int(parts[3])
-        owner_id = int(parts[4])
-    except Exception:
-        await query.message.reply_text("Invalid callback format.")
-        return
+    tx_db_id = int(parts[2])
+    page = int(parts[3])
+    owner_id = int(parts[4])
 
-    # authorize: only owner or admin may view
     if update.effective_user.id != owner_id and not _is_admin(update.effective_user.id):
         await query.message.reply_text("Forbidden: cannot view other user's transaction.")
         return
@@ -811,11 +910,11 @@ async def history_details_callback(update: Update, context: ContextTypes.DEFAULT
         await query.message.reply_text("Transaction not found.")
         return
 
-    created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else ""
-    amount = f"{float(tx.amount):.2f}$" if tx.amount is not None else ""
+    created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else "-"
+    amount = f"{float(tx.amount):.2f}$" if tx.amount is not None else "-"
     tx_type = (tx.type or "").upper()
     status = (tx.status or "").upper()
-    ref = tx.ref or ""
+    ref = tx.ref or "-"
     proof = tx.proof or ""
     wallet = tx.wallet or ""
     network = tx.network or "-"
@@ -831,18 +930,14 @@ async def history_details_callback(update: Update, context: ContextTypes.DEFAULT
         f"Network: {network}\n"
     )
 
-    # Build Back button to return to the same page, and Exit to main menu.
     back_cb = f"history_back_{page}_{owner_id}"
     kb = []
-    # For admins on pending tx provide action buttons as well
     if _is_admin(query.from_user.id) and tx.status == 'pending':
         kb.append([InlineKeyboardButton("✅ Approve", callback_data=f"admin_start_approve_{tx.id}"),
                    InlineKeyboardButton("❌ Reject", callback_data=f"admin_start_reject_{tx.id}")])
-    # Back and Exit row
     kb.append([InlineKeyboardButton("◀ Back to History", callback_data=back_cb),
                InlineKeyboardButton("Exit ❌", callback_data="menu_exit")])
 
-    # If proof is a photo file id (stored as 'photo:<file_id>') show as photo with caption
     if proof and proof.startswith("photo:"):
         file_id = proof.split(":", 1)[1]
         try:
@@ -857,13 +952,9 @@ async def history_details_callback(update: Update, context: ContextTypes.DEFAULT
     await query.message.reply_text(detail_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
 
 async def history_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Callback: history_back_{page}_{user_id} -> displays that page of history.
-    """
     query = update.callback_query
     await query.answer()
-    data = query.data
-    parts = data.split("_")
+    parts = query.data.split("_")
     if len(parts) < 4:
         await query.message.reply_text("Invalid back callback.")
         return
@@ -875,7 +966,10 @@ async def history_back_callback(update: Update, context: ContextTypes.DEFAULT_TY
     context.args = [str(page)]
     await history_command(update, context)
 
-# Cancel helper
+# -----------------------
+# Utilities: cancel, start, commands
+# -----------------------
+
 async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE):
     if context and getattr(context, "user_data", None):
         context.user_data.clear()
@@ -883,7 +977,6 @@ async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TY
         await update.callback_query.answer()
     return ConversationHandler.END
 
-# Wallet/history/help commands
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
         await send_balance_message(update.effective_message, session, update.effective_user.id)
@@ -918,7 +1011,6 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = ("/start - main menu\n/balance\n/invest\n/withdraw\n/wallet\n/history\n/history all (admin)\n/information\n/help")
     await update.effective_message.reply_text(help_text)
 
-# Settings entry
 async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
@@ -927,15 +1019,16 @@ async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TY
         await update.effective_message.reply_text("Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).")
     return WITHDRAW_WALLET
 
-# Start handler — removed reply keyboard so no keyboard appears in chat bottom
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        # Show main menu inline keyboard only (no reply keyboard)
         await update.effective_message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard())
     except Exception:
         await update.effective_message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard())
 
+# -----------------------
 # MAIN wiring
+# -----------------------
+
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -964,14 +1057,11 @@ def main():
 
     app.add_handler(conv_handler)
 
-    # admin handlers
     app.add_handler(CallbackQueryHandler(admin_start_action_callback, pattern='^admin_start_(approve|reject)_\\d+$'))
     app.add_handler(CallbackQueryHandler(admin_confirm_callback, pattern='^admin_confirm_(approve|reject)_\\d+$'))
     app.add_handler(CallbackQueryHandler(admin_cancel_callback, pattern='^admin_cancel_\\d+$'))
 
-    # history callbacks
     app.add_handler(CallbackQueryHandler(history_page_callback, pattern='^history_page_\\d+_\\d+$'))
-    # details expects history_details_{tx}_{page}_{owner}
     app.add_handler(CallbackQueryHandler(history_details_callback, pattern='^history_details_\\d+_\\d+_\\d+$'))
     app.add_handler(CallbackQueryHandler(history_back_callback, pattern='^history_back_\\d+_\\d+$'))
 
@@ -986,7 +1076,6 @@ def main():
 
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
-    # scheduler
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
