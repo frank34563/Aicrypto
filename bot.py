@@ -1,4 +1,5 @@
 # Full final bot.py — Reply keyboard on /start removed.
+# Main menu uses full-width single-column inline buttons for a cleaner UI.
 # History buttons show only DATE | AMOUNT | TYPE and details include Back/Exit.
 # Referral "Copy Link" uses switch_inline_query_current_chat and leaves the referral link message in chat.
 #
@@ -15,7 +16,7 @@ import logging
 import random
 import re
 from datetime import datetime
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List
 from dotenv import load_dotenv
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -23,8 +24,6 @@ from telegram import (
     Update,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
 )
 from telegram.ext import (
     Application,
@@ -38,7 +37,7 @@ from telegram.ext import (
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, DateTime,
-    BigInteger, select, func, Numeric, text, update as sa_update
+    BigInteger, select, Numeric, text, update as sa_update
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -57,7 +56,7 @@ MASTER_NETWORK = os.getenv('MASTER_NETWORK', 'TRC20')
 SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
 SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else None)
 
-MENU_FULL_WIDTH = os.getenv('MENU_FULL_WIDTH', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
+MENU_FULL_WIDTH = os.getenv('MENU_FULL_WIDTH', 'true').strip().lower() in ('1', 'true', 'yes', 'on')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 logging.basicConfig(level=logging.INFO)
@@ -194,25 +193,36 @@ INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, W
 
 # UI helpers and validation
 def build_main_menu_keyboard(full_width: bool = MENU_FULL_WIDTH) -> InlineKeyboardMarkup:
-    rows = []
-    rows.append([InlineKeyboardButton("💰 Balance", callback_data="menu_balance"),
-                 InlineKeyboardButton("📈 Invest", callback_data="menu_invest")])
-    rows.append([InlineKeyboardButton("🧾 History", callback_data="menu_history"),
-                 InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")])
-    rows.append([InlineKeyboardButton("👥 Referrals", callback_data="menu_referrals"),
-                 InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")])
-    rows.append([InlineKeyboardButton("ℹ️ Information", callback_data="menu_info"),
-                 InlineKeyboardButton("❓ Help", url=SUPPORT_URL if SUPPORT_URL else "https://t.me/")])
-    rows.append([InlineKeyboardButton("⨉ Exit", callback_data="menu_exit")])
+    """
+    Build menu. When full_width is True, render single-column (one button per row) inline keyboard,
+    which visually looks like full-width buttons in most Telegram clients.
+    """
+    if full_width:
+        rows = [
+            [InlineKeyboardButton("💰  Balance", callback_data="menu_balance")],
+            [InlineKeyboardButton("📈  Invest", callback_data="menu_invest")],
+            [InlineKeyboardButton("🧾  History", callback_data="menu_history")],
+            [InlineKeyboardButton("💸  Withdraw", callback_data="menu_withdraw")],
+            [InlineKeyboardButton("👥  Referrals", callback_data="menu_referrals")],
+            [InlineKeyboardButton("⚙️  Settings", callback_data="menu_settings")],
+            [InlineKeyboardButton("ℹ️  Information", callback_data="menu_info")],
+            [InlineKeyboardButton("❓  Help", url=SUPPORT_URL if SUPPORT_URL else "https://t.me/")],
+            [InlineKeyboardButton("⨉  Exit", callback_data="menu_exit")],
+        ]
+    else:
+        # default two-column grid
+        rows = [
+            [InlineKeyboardButton("💰 Balance", callback_data="menu_balance"),
+             InlineKeyboardButton("📈 Invest", callback_data="menu_invest")],
+            [InlineKeyboardButton("🧾 History", callback_data="menu_history"),
+             InlineKeyboardButton("💸 Withdraw", callback_data="menu_withdraw")],
+            [InlineKeyboardButton("👥 Referrals", callback_data="menu_referrals"),
+             InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings")],
+            [InlineKeyboardButton("ℹ️ Information", callback_data="menu_info"),
+             InlineKeyboardButton("❓ Help", url=SUPPORT_URL if SUPPORT_URL else "https://t.me/")],
+            [InlineKeyboardButton("⨉ Exit", callback_data="menu_exit")]
+        ]
     return InlineKeyboardMarkup(rows)
-
-def build_reply_shortcuts():
-    # function kept for backward-compatibility but not used on /start (keyboard removed per request)
-    kb = [
-        [KeyboardButton("/balance"), KeyboardButton("/invest")],
-        [KeyboardButton("/withdraw"), KeyboardButton("/history")],
-    ]
-    return ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=False)
 
 def is_probable_wallet(address: str) -> bool:
     address = address.strip()
