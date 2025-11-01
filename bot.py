@@ -1,5 +1,6 @@
-# Full final bot.py — History buttons show only DATE | AMOUNT | TYPE and open detailed view on tap.
+# Full final bot.py — History buttons show only DATE | AMOUNT | TYPE and details include Back/Exit.
 # Replace your current bot.py with this file and restart.
+#
 # Environment variables required:
 # - BOT_TOKEN (required)
 # - ADMIN_ID (required, numeric)
@@ -667,6 +668,7 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 # -------------------------
 # HISTORY: buttons show only DATE | AMOUNT | TYPE (one button per tx)
+# Details view includes Back to History and Exit to Main Menu
 # -------------------------
 
 def history_list_item_text(tx: Transaction) -> str:
@@ -728,20 +730,22 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Build only buttons (each button label = "DATE | AMOUNT | TYPE")
     kb_rows = []
     for tx in page_items:
-        btn_label = history_list_item_text(tx)
-        kb_rows.append([InlineKeyboardButton(btn_label, callback_data=f"history_details_{tx.id}")])
+        # callback_data includes tx.id, page, owner_id so details view can provide Back button
+        kb_rows.append([InlineKeyboardButton(history_list_item_text(tx), callback_data=f"history_details_{tx.id}_{page}_{user_id}")])
 
-    # Prev/Next navigation row
+    # Prev/Next navigation row + Exit (back to main menu)
     nav = []
     if page > 1:
         nav.append(InlineKeyboardButton("⬅ Prev", callback_data=f"history_page_{page-1}_{user_id}"))
     if page < total_pages:
         nav.append(InlineKeyboardButton("Next ➡", callback_data=f"history_page_{page+1}_{user_id}"))
+    # Exit to main menu
+    nav.append(InlineKeyboardButton("Exit ❌", callback_data="menu_exit"))
     if nav:
         kb_rows.append(nav)
 
     header = f"🧾 Transactions (page {page}/{total_pages}) — Tap an item for details\n\n"
-    # send header + keyboard only (no long textual list), as requested
+    # send header + keyboard only (no long textual list)
     await ef_msg.reply_text(header, reply_markup=InlineKeyboardMarkup(kb_rows))
 
 async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -761,14 +765,30 @@ async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await history_command(update, context)
 
 async def history_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Expects callback_data format: history_details_{tx_id}_{page}_{user_id}
+    So the details view can include a Back button returning to that page for that user.
+    """
     query = update.callback_query
     await query.answer()
     data = query.data
     parts = data.split("_")
-    if len(parts) < 3:
+    if len(parts) < 5:
         await query.message.reply_text("Invalid details callback.")
         return
-    tx_db_id = int(parts[2])
+    try:
+        tx_db_id = int(parts[2])
+        page = int(parts[3])
+        owner_id = int(parts[4])
+    except Exception:
+        await query.message.reply_text("Invalid callback format.")
+        return
+
+    # authorize: only owner or admin may view
+    if update.effective_user.id != owner_id and not _is_admin(update.effective_user.id):
+        await query.message.reply_text("Forbidden: cannot view other user's transaction.")
+        return
+
     async with async_session() as session:
         result = await session.execute(select(Transaction).where(Transaction.id == tx_db_id))
         tx = result.scalar_one_or_none()
@@ -782,7 +802,7 @@ async def history_details_callback(update: Update, context: ContextTypes.DEFAULT
     status = (tx.status or "").upper()
     ref = tx.ref or "-"
     proof = tx.proof or "-"
-    wallet = tx.wallet or "-"
+    wallet = tx.wallet or ""
     network = tx.network or "-"
 
     detail_text = (
@@ -796,11 +816,22 @@ async def history_details_callback(update: Update, context: ContextTypes.DEFAULT
         f"Network: {network}\n"
     )
 
+    # Build Back button to return to the same page, and Exit to main menu.
+    back_cb = f"history_back_{page}_{owner_id}"
+    kb = []
+    # For admins on pending tx provide action buttons as well
+    if _is_admin(query.from_user.id) and tx.status == 'pending':
+        kb.append([InlineKeyboardButton("✅ Approve", callback_data=f"admin_start_approve_{tx.id}"),
+                   InlineKeyboardButton("❌ Reject", callback_data=f"admin_start_reject_{tx.id}")])
+    # Back and Exit row
+    kb.append([InlineKeyboardButton("◀ Back to History", callback_data=back_cb),
+               InlineKeyboardButton("Exit ❌", callback_data="menu_exit")])
+
     # If proof is a photo file id (stored as 'photo:<file_id>') show as photo with caption
     if proof and proof.startswith("photo:"):
         file_id = proof.split(":", 1)[1]
         try:
-            await context.application.bot.send_photo(chat_id=query.from_user.id, photo=file_id, caption=detail_text, parse_mode="HTML", reply_markup=(admin_action_kb(tx.id) if _is_admin(query.from_user.id) and tx.status == 'pending' else None))
+            await context.application.bot.send_photo(chat_id=query.from_user.id, photo=file_id, caption=detail_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
             return
         except Exception:
             pass
@@ -808,7 +839,26 @@ async def history_details_callback(update: Update, context: ContextTypes.DEFAULT
     if proof and proof != "-":
         detail_text += f"\nProof: <code>{proof}</code>"
 
-    await query.message.reply_text(detail_text, parse_mode="HTML", reply_markup=(admin_action_kb(tx.id) if _is_admin(query.from_user.id) and tx.status == 'pending' else None))
+    await query.message.reply_text(detail_text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(kb))
+
+async def history_back_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Callback: history_back_{page}_{user_id} -> displays that page of history.
+    """
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    parts = data.split("_")
+    if len(parts) < 4:
+        await query.message.reply_text("Invalid back callback.")
+        return
+    page = int(parts[2])
+    uid = int(parts[3])
+    if update.effective_user.id != uid and not _is_admin(update.effective_user.id):
+        await query.message.reply_text("Forbidden: cannot view other user's history.")
+        return
+    context.args = [str(page)]
+    await history_command(update, context)
 
 # Cancel helper
 async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE):
@@ -906,7 +956,9 @@ def main():
 
     # history callbacks
     app.add_handler(CallbackQueryHandler(history_page_callback, pattern='^history_page_\\d+_\\d+$'))
-    app.add_handler(CallbackQueryHandler(history_details_callback, pattern='^history_details_\\d+$'))
+    # details expects history_details_{tx}_{page}_{owner}
+    app.add_handler(CallbackQueryHandler(history_details_callback, pattern='^history_details_\\d+_\\d+_\\d+$'))
+    app.add_handler(CallbackQueryHandler(history_back_callback, pattern='^history_back_\\d+_\\d+$'))
 
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(CommandHandler("start", start_handler))
