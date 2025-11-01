@@ -1,9 +1,9 @@
-# Full final bot.py — Complete bot with:
-# - Inline main menu (no reply keyboard) with optional two-column "full" UI (image-4 style)
-# - Referral "Copy Link" button uses switch_inline_query_current_chat and leaves link message in chat
-# - History: buttons show DATE | AMOUNT | TYPE, with Prev/Next/Exit, and details include Back/Exit
-# - Invest and Withdraw request messages (pending) formatted like samples
-# - Admin approvals send Deposit Receipt and Withdrawal Receipt formatted like samples
+# Full final bot.py — Updated main menu layout to match the "Information" message width/size.
+# Changes:
+# - The build_main_menu_keyboard() function now builds a compact, centered two-column keyboard
+#   where the whole keyboard width matches the width of a typical information message bubble.
+# - Buttons are padded minimally and use consistent button label lengths to align visually.
+# - Rest of the bot logic (invest/withdraw/history/admin flows, DB, etc.) unchanged from prior full version.
 #
 # Environment variables required:
 # - BOT_TOKEN (required)
@@ -58,6 +58,7 @@ MASTER_NETWORK = os.getenv('MASTER_NETWORK', 'TRC20')
 SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
 SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else "https://t.me/")
 
+# Keep the option to toggle two-column/full UI; default true
 MENU_FULL_TWO_COLUMN = os.getenv('MENU_FULL_TWO_COLUMN', 'true').lower() in ('1','true','yes','on')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
@@ -202,16 +203,27 @@ INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, W
 
 ZWSP = "\u200b"
 
-def _pad_label_for_full_width(label: str, target_chars: int = 18) -> str:
+def _pad_label(label: str, total_len: int = 12) -> str:
+    """
+    Minimal padding helper to keep labels roughly equal width.
+    target total_len is kept small to match the information bubble width.
+    """
     plain = label.replace(ZWSP, "")
-    if len(plain) >= target_chars:
+    if len(plain) >= total_len:
         return label
-    needed = target_chars - len(plain)
+    needed = total_len - len(plain)
     left = needed // 2
     right = needed - left
     return (" " * left) + label + (" " * right) + ZWSP
 
 def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN) -> InlineKeyboardMarkup:
+    """
+    Build a compact two-column keyboard whose overall width matches an information bubble:
+    - Buttons have minimal padding.
+    - The keyboard is visually narrower compared to the previous 'full' layout.
+    - Exit is a full-width row (single button) matching the bubble width.
+    """
+    # If user explicitly disabled full two-column, fallback to original compact layout
     if not full_two_column:
         rows = []
         rows.append([InlineKeyboardButton("💰 Balance", callback_data="menu_balance"),
@@ -225,7 +237,9 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN) -> In
         rows.append([InlineKeyboardButton("⨉ Exit", callback_data="menu_exit")])
         return InlineKeyboardMarkup(rows)
 
-    tlen = 18
+    # Compact target lengths tuned to match message bubble width (image-5)
+    tlen = 12
+
     left_right = [
         ("💰 Balance", "menu_balance", "📈 Invest", "menu_invest"),
         ("🧾 History", "menu_history", "💸 Withdraw", "menu_withdraw"),
@@ -235,8 +249,8 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN) -> In
 
     rows = []
     for l_label, l_cb, r_label, r_cb in left_right:
-        l = _pad_label_for_full_width(l_label, target_chars=tlen)
-        r = _pad_label_for_full_width(r_label, target_chars=tlen)
+        l = _pad_label(l_label, total_len=tlen)
+        r = _pad_label(r_label, total_len=tlen)
         left_btn = InlineKeyboardButton(l, callback_data=l_cb)
         if r_cb == "menu_help_url":
             right_btn = InlineKeyboardButton(r, url=SUPPORT_URL if SUPPORT_URL else "https://t.me/")
@@ -244,7 +258,8 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN) -> In
             right_btn = InlineKeyboardButton(r, callback_data=r_cb)
         rows.append([left_btn, right_btn])
 
-    exit_label = _pad_label_for_full_width("⨉ Exit", target_chars=(tlen*2)//2)
+    # Exit single centered compact row — pad to visually match bubble width
+    exit_label = _pad_label("⨉ Exit", total_len=(tlen*2)//2)
     rows.append([InlineKeyboardButton(exit_label, callback_data="menu_exit")])
     return InlineKeyboardMarkup(rows)
 
