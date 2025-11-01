@@ -1,5 +1,5 @@
 # Full final bot.py — Complete bot with:
-# - Inline main menu (no reply keyboard) with optional two-column "full" UI
+# - Inline main menu (no reply keyboard) with optional two-column "full" UI (image-4 style)
 # - Referral "Copy Link" button uses switch_inline_query_current_chat and leaves link message in chat
 # - History: buttons show DATE | AMOUNT | TYPE, with Prev/Next/Exit, and details include Back/Exit
 # - Invest and Withdraw request messages (pending) formatted like samples
@@ -18,7 +18,7 @@ import logging
 import random
 import re
 from datetime import datetime, timezone, timedelta
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List
 from dotenv import load_dotenv
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -38,8 +38,8 @@ from telegram.ext import (
 )
 
 from sqlalchemy import (
-    create_engine, Column, Integer, String, DateTime,
-    BigInteger, select, func, Numeric, text, update as sa_update
+    Column, Integer, String, DateTime,
+    BigInteger, select, Numeric, text, update as sa_update
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -56,7 +56,7 @@ ADMIN_LOG_CHAT_ID = os.getenv('ADMIN_LOG_CHAT_ID')  # optional
 MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbc...')
 MASTER_NETWORK = os.getenv('MASTER_NETWORK', 'TRC20')
 SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
-SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else None)
+SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else "https://t.me/")
 
 MENU_FULL_TWO_COLUMN = os.getenv('MENU_FULL_TWO_COLUMN', 'true').lower() in ('1','true','yes','on')
 DATABASE_URL = os.getenv('DATABASE_URL')
