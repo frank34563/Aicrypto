@@ -1,11 +1,13 @@
-# Full patched bot.py — fixes NameError: withdraw_confirm_callback not defined by ensuring
-# withdraw_confirm_callback is implemented before it's referenced in main().
-# This is the consolidated working bot with:
-# - Invest/withdraw flows, wallet settings, history, /pending, admin approve/reject (idempotent),
-# - ensure_columns at startup, 5-digit refs, notifications to users on admin actions,
-# - handlers ordered so ConversationHandler entry points take precedence.
-# Replace your current bot.py with this file and restart the service.
-
+# Full patched bot.py — consolidated final version with withdraw_amount_received integrated and verified order.
+# Features:
+# - Invest flow: amount -> show deposit wallet -> user uploads screenshot or txid -> confirm -> pending tx -> admin notified
+# - Withdraw flow: amount -> wallet (reuse saved or enter new) -> confirm -> pending tx -> admin notified
+# - Settings -> Set/Update Withdrawal Wallet starts conversation and saves wallet
+# - Admin: /pending lists pending txs; Approve/Reject buttons act idempotently and notify users
+# - /history shows user history; /history all (admin) shows recent system transactions
+# - ensure_columns() adds missing nullable columns at startup (idempotent)
+# - Uses async SQLAlchemy, aiosqlite/postgres compatible, and python-telegram-bot v20+ conversation handling
+# Requirements: set env vars BOT_TOKEN, ADMIN_ID (int), MASTER_WALLET, MASTER_NETWORK, DATABASE_URL (optional)
 import os
 import logging
 import random
@@ -43,7 +45,7 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN not set!")
 
-ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))  # set admin Telegram numeric user id
+ADMIN_ID = int(os.getenv('ADMIN_ID', '0'))  # numeric Telegram id for admin
 MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbc...')
 MASTER_NETWORK = os.getenv('MASTER_NETWORK', 'TRC20')
 SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
@@ -99,7 +101,7 @@ class Transaction(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# Init helpers
+# DB init helpers
 import asyncio, sys, time
 
 async def _create_all_with_timeout(engine_to_use):
@@ -107,6 +109,10 @@ async def _create_all_with_timeout(engine_to_use):
         await conn.run_sync(Base.metadata.create_all)
 
 async def ensure_columns():
+    """
+    Ensure nullable columns that may be missing on older schemas exist.
+    Safe to run at startup; uses ALTER TABLE ... ADD COLUMN IF NOT EXISTS for idempotence.
+    """
     async with engine.begin() as conn:
         await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_network VARCHAR"))
         await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS proof VARCHAR"))
@@ -115,6 +121,9 @@ async def ensure_columns():
         await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS ref VARCHAR"))
 
 async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bool = True):
+    """
+    Initialize DB and ensure safe missing columns are added.
+    """
     global engine, async_session, DATABASE_URL
     last_exc = None
     attempt = 0
@@ -134,6 +143,7 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
             logger.warning("Database init attempt %d/%d failed: %s", attempt, retries, e)
             wait = backoff * (2 ** (attempt - 1))
             await asyncio.sleep(wait)
+
     logger.error("All %d database init attempts failed. Last error: %s", retries, last_exc)
     if fallback_to_sqlite:
         try:
@@ -152,6 +162,7 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
             return
         except Exception as e2:
             logger.exception("Fallback to sqlite failed: %s", e2)
+    logger.critical("Unable to initialize database and fallback failed — exiting.")
     await asyncio.sleep(0.1)
     sys.exit(1)
 
@@ -171,6 +182,9 @@ async def update_user(session: AsyncSession, user_id: int, **kwargs):
     await session.commit()
 
 async def log_transaction(session: AsyncSession, **data):
+    """
+    Create transaction row and return (db_id, ref).
+    """
     if 'ref' not in data or not data.get('ref'):
         data['ref'] = f"{random.randint(10000,99999)}"
     tx = Transaction(**data)
@@ -234,12 +248,13 @@ async def daily_profit_job():
                               balance=float(user.balance or 0) + profit)
             await log_transaction(session, user_id=user.id, type='profit', amount=profit, status='credited')
 
-# Menu callback
+# Menu callback handling
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data if query else None
     if query:
         await query.answer()
+    # let ConversationHandler handle invest/withdraw entrypoints
     if data in ("menu_invest", "menu_withdraw") or (data and data.startswith("admin_")):
         logger.debug("menu_callback ignoring %s", data)
         return
@@ -272,6 +287,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ])
         await query.edit_message_text("⚙️ Settings\nChoose an action:", reply_markup=kb)
     elif data == "settings_set_wallet":
+        # handled by ConversationHandler entry point
         return
     elif data == "menu_info":
         info_text = ("ℹ️ Information\n\nWelcome to AiCrypto bot.\n- Invest: deposit funds to provided wallet and upload proof (txid or screenshot). Admin will approve.\n- Withdraw: request withdrawals; admin will approve and process.")
@@ -281,19 +297,23 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         return
 
-# Balance helper
+# Send balance message helper
 async def send_balance_message(query_or_message, session: AsyncSession, user_id: int):
     user = await get_user(session, user_id)
-    msg = (f"💎 <b>Balance</b>\nYour Balance: <b>{float(user['balance']):.2f}$</b>\n"
-           f"In Process: <b>{float(user['balance_in_process']):.2f}$</b>\n"
-           f"Daily Profit: <b>{float(user['daily_profit']):.2f}$</b>\n"
-           f"Total Profit: <b>{float(user['total_profit']):.2f}$</b>\n\nManager: {SUPPORT_USER}")
+    msg = (
+        f"💎 <b>Balance</b>\n"
+        f"Your Balance: <b>{float(user['balance']):.2f}$</b>\n"
+        f"In Process: <b>{float(user['balance_in_process']):.2f}$</b>\n"
+        f"Daily Profit: <b>{float(user['daily_profit']):.2f}$</b>\n"
+        f"Total Profit: <b>{float(user['total_profit']):.2f}$</b>\n\n"
+        f"Manager: {SUPPORT_USER}"
+    )
     try:
         await query_or_message.edit_message_text(msg, reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL), parse_mode="HTML")
     except Exception:
         await query_or_message.reply_text(msg, reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL), parse_mode="HTML")
 
-# Fallback balance handler
+# Plain-text "Balance" handler
 async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
         await send_balance_message(update.effective_message, session, update.effective_user.id)
@@ -321,8 +341,11 @@ async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_T
         return INVEST_AMOUNT
     amount = round(amount, 2)
     context.user_data['invest_amount'] = amount
-    wallet_msg = (f"📥 Deposit {amount:.2f}$\nSend to wallet:\nWallet: <code>{MASTER_WALLET}</code>\nNetwork: <b>{MASTER_NETWORK}</b>\n\n"
-                  "After sending, upload a screenshot of the transaction OR send the transaction hash (txid).")
+
+    wallet_msg = (
+        f"📥 Deposit {amount:.2f}$\nSend to wallet:\nWallet: <code>{MASTER_WALLET}</code>\nNetwork: <b>{MASTER_NETWORK}</b>\n\n"
+        "After sending, upload a screenshot of the transaction OR send the transaction hash (txid)."
+    )
     await update.effective_message.reply_text(wallet_msg, parse_mode="HTML")
     return INVEST_PROOF
 
@@ -406,7 +429,48 @@ async def withdraw_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     logger.info("Withdraw conversation started for user %s", update.effective_user.id)
     return WITHDRAW_AMOUNT
 
-# ---- REPLACED: robust withdraw_wallet_received handler (works for settings and withdraw flow) ----
+# ---- withdraw_amount_received (missing earlier) ----
+async def withdraw_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Handle the user-entered withdrawal amount.
+    """
+    msg = update.effective_message
+    text = (msg.text or "").strip()
+    try:
+        amount = float(text)
+        if amount <= 0:
+            raise ValueError()
+    except Exception:
+        await msg.reply_text("Invalid amount. Send a positive number like 50 or 25.75, or /cancel.")
+        return WITHDRAW_AMOUNT
+
+    amount = round(amount, 2)
+    user_id = update.effective_user.id
+
+    # store amount so withdraw_wallet_received can continue
+    context.user_data['withdraw_amount'] = amount
+
+    async with async_session() as session:
+        user = await get_user(session, user_id)
+    balance = float(user.get('balance') or 0)
+    if amount > balance:
+        await msg.reply_text(f"Insufficient balance. Your available balance is {balance:.2f}$. Enter a smaller amount or /cancel.")
+        context.user_data.pop('withdraw_amount', None)
+        return WITHDRAW_AMOUNT
+
+    saved_wallet = user.get('wallet_address')
+    saved_network = user.get('wallet_network')
+    if saved_wallet:
+        await msg.reply_text(
+            f"Your saved wallet:\nWallet: <code>{saved_wallet}</code>\nNetwork: <b>{saved_network}</b>\n\nSend 'yes' to use it or send a new wallet and optional network.",
+            parse_mode="HTML"
+        )
+    else:
+        await msg.reply_text("No saved wallet. Send wallet address and optional network (e.g., <code>0xabc... ERC20</code>).", parse_mode="HTML")
+
+    return WITHDRAW_WALLET
+
+# ---- withdraw_wallet_received (robust for settings and withdraw) ----
 async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     user_id = update.effective_user.id
@@ -444,19 +508,18 @@ async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT
         await msg.reply_text(
             f"Confirm withdrawal:\nAmount: {amount:.2f}$\nWallet: <code>{wallet_address}</code>\nNetwork: <b>{wallet_network}</b>",
             parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("✅ Confirm", callback_data="withdraw_confirm_yes"),
-                 InlineKeyboardButton("❌ Cancel", callback_data="withdraw_confirm_no")]
-            ])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Confirm", callback_data="withdraw_confirm_yes"),
+                                               InlineKeyboardButton("❌ Cancel", callback_data="withdraw_confirm_no")]])
         )
         return WITHDRAW_CONFIRM
     else:
-        await msg.reply_text(f"✅ Withdrawal wallet saved:\nWallet: <code>{wallet_address}</code>\nNetwork: {wallet_network}", parse_mode="HTML", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+        await msg.reply_text(f"✅ Withdrawal wallet saved:\nWallet: <code>{wallet_address}</code>\nNetwork: {wallet_network}",
+                            parse_mode="HTML", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
         context.user_data.pop('withdraw_wallet', None)
         context.user_data.pop('withdraw_network', None)
         return ConversationHandler.END
 
-# ---- NEW/ENSURED: withdraw_confirm_callback defined before main() ----
+# ---- withdraw_confirm_callback (ensured defined) ----
 async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -676,7 +739,7 @@ async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TY
         await update.callback_query.answer()
     return ConversationHandler.END
 
-# Balance and wallet
+# Balance and wallet commands
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
         await send_balance_message(update.effective_message, session, update.effective_user.id)
@@ -700,6 +763,7 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.effective_message.reply_text("No withdrawal wallet saved. Set it with /wallet <address> [network]")
 
+# Information and help
 async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("ℹ️ Information\n\nWelcome to AiCrypto bot.\n- Invest: deposit funds to provided wallet and upload proof (txid or screenshot). Admin will approve.\n- Withdraw: request withdrawals; admin will approve and process.")
 
@@ -717,7 +781,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.effective_message.reply_text(help_text)
 
-# Settings entry for wallet (starts same WITHDRAW_WALLET state)
+# Settings entry to start wallet capture
 async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
@@ -726,7 +790,7 @@ async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TY
         await update.effective_message.reply_text("Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).")
     return WITHDRAW_WALLET
 
-# === MAIN ===
+# === MAIN & handler wiring ===
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -756,6 +820,7 @@ def main():
         allow_reentry=True,
     )
 
+    # register handlers in correct order
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern='^admin_(approve|reject)_\\d+$'))
     app.add_handler(CallbackQueryHandler(menu_callback))
@@ -768,9 +833,11 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
     app.add_handler(CommandHandler("pending", admin_pending_command))
 
+    # redundant safe registrations
     app.add_handler(CommandHandler("invest", invest_cmd_handler))
     app.add_handler(CommandHandler("withdraw", withdraw_cmd_handler))
 
+    # Scheduler
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
