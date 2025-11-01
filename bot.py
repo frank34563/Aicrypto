@@ -1,6 +1,6 @@
-# Full final bot.py — Referral "Copy Link" button uses switch_inline_query_current_chat and leaves
-# the referral link message in chat. Back/Exit returns to Main Menu by editing the menu message.
+# Full final bot.py — Reply keyboard on /start removed.
 # History buttons show only DATE | AMOUNT | TYPE and details include Back/Exit.
+# Referral "Copy Link" uses switch_inline_query_current_chat and leaves the referral link message in chat.
 #
 # Environment variables required:
 # - BOT_TOKEN (required)
@@ -207,6 +207,7 @@ def build_main_menu_keyboard(full_width: bool = MENU_FULL_WIDTH) -> InlineKeyboa
     return InlineKeyboardMarkup(rows)
 
 def build_reply_shortcuts():
+    # function kept for backward-compatibility but not used on /start (keyboard removed per request)
     kb = [
         [KeyboardButton("/balance"), KeyboardButton("/invest")],
         [KeyboardButton("/withdraw"), KeyboardButton("/history")],
@@ -313,7 +314,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await history_command(update, context)
     elif data == "menu_referrals":
         # Send a separate message containing the referral link (so it remains in chat)
-        # and provide a single "Copy Link" style button that inserts the link into the current chat input.
+        # and provide a single "Copy Link" button that inserts the link into the current chat input.
         user_id = query.from_user.id
         bot_username = (await context.bot.get_me()).username
         referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
@@ -810,11 +811,11 @@ async def history_details_callback(update: Update, context: ContextTypes.DEFAULT
         await query.message.reply_text("Transaction not found.")
         return
 
-    created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else "-"
-    amount = f"{float(tx.amount):.2f}$" if tx.amount is not None else "-"
+    created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else ""
+    amount = f"{float(tx.amount):.2f}$" if tx.amount is not None else ""
     tx_type = (tx.type or "").upper()
     status = (tx.status or "").upper()
-    ref = tx.ref or "-"
+    ref = tx.ref or ""
     proof = tx.proof or ""
     wallet = tx.wallet or ""
     network = tx.network or "-"
@@ -926,11 +927,11 @@ async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TY
         await update.effective_message.reply_text("Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).")
     return WITHDRAW_WALLET
 
-# Start handler
+# Start handler — removed reply keyboard so no keyboard appears in chat bottom
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        # Show main menu inline keyboard only (no reply keyboard)
         await update.effective_message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard())
-        await update.effective_message.reply_text("Quick actions:", reply_markup=build_reply_shortcuts())
     except Exception:
         await update.effective_message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard())
 
