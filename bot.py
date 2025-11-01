@@ -1,5 +1,5 @@
-# Complete corrected bot.py — all handlers defined before main() with proper ordering.
-# Ready to copy/paste and deploy.
+# Complete bot.py — full, self-contained Telegram bot with invest/withdraw flows, admin approve/reject,
+# history, wallet settings, /pending, and a daily profit job.
 # Environment variables required:
 # - BOT_TOKEN
 # - ADMIN_ID (integer)
@@ -7,14 +7,7 @@
 # - MASTER_NETWORK
 # - DATABASE_URL (optional)
 #
-# Features:
-# - Invest and Withdraw flows with proof upload and confirm button
-# - Admin approve/reject (idempotent), user notifications
-# - Random 5-digit transaction reference shown to users
-# - /pending (admin), /history (user) and /history all (admin)
-# - /wallet to view/set withdrawal wallet; settings menu reuses same flow
-# - DB initialization creates missing nullable columns at startup
-# - Defensive handling to avoid None formatting and NameError issues
+# Save as bot.py and restart your process.
 
 import os
 import logging
@@ -24,24 +17,15 @@ from typing import Dict, Optional, List
 from dotenv import load_dotenv
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from telegram import (
-    Update,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-)
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
-    Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
-    ConversationHandler,
-    ContextTypes,
-    filters,
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
+    ConversationHandler, ContextTypes, filters
 )
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, DateTime,
-    BigInteger, select, func, Numeric, text, update as sa_update
+    BigInteger, select, Numeric, text, update as sa_update
 )
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -58,7 +42,6 @@ MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbc...')
 MASTER_NETWORK = os.getenv('MASTER_NETWORK', 'TRC20')
 SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
 SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else None)
-
 MENU_FULL_WIDTH = os.getenv('MENU_FULL_WIDTH', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
@@ -71,8 +54,6 @@ Base = declarative_base()
 if DATABASE_URL:
     if DATABASE_URL.startswith("postgres://"):
         DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
-    elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
-        DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 else:
     DATABASE_URL = "sqlite+aiosqlite:///bot.db"
 
@@ -98,8 +79,8 @@ class Transaction(Base):
     __tablename__ = 'transactions'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger)
-    ref = Column(String)            # random 5-digit reference
-    type = Column(String)           # 'invest' or 'withdraw'
+    ref = Column(String)            # 5-digit reference shown to users
+    type = Column(String)           # 'invest' or 'withdraw' or 'profit'
     amount = Column(Numeric(15, 2))
     status = Column(String)         # 'pending','credited','rejected','completed'
     proof = Column(String)
@@ -107,7 +88,7 @@ class Transaction(Base):
     network = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-# === DB helpers and init ===
+# === DB init helpers ===
 import asyncio, sys
 
 async def _create_all_with_timeout(engine_to_use):
@@ -133,15 +114,15 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
             await _create_all_with_timeout(current_engine)
             try:
                 await ensure_columns()
-            except Exception as e:
-                logger.warning("ensure_columns warning: %s", e)
+            except Exception as col_exc:
+                logger.warning("ensure_columns warning: %s", col_exc)
             logger.info("Database initialized successfully.")
             return
         except Exception as e:
             last_exc = e
             logger.warning("Database init attempt %d/%d failed: %s", attempt, retries, e)
             await asyncio.sleep(backoff * (2 ** (attempt - 1)))
-    logger.error("DB init failed after retries: %s", last_exc)
+    logger.error("All %d DB init attempts failed. Last error: %s", retries, last_exc)
     if fallback_to_sqlite:
         try:
             sqlite_url = "sqlite+aiosqlite:///bot_fallback.db"
@@ -150,12 +131,17 @@ async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bo
             engine = _create_async_engine(DATABASE_URL, echo=False, future=True)
             async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
             await _create_all_with_timeout(engine)
+            try:
+                await ensure_columns()
+            except Exception as col_exc:
+                logger.warning("ensure_columns sqlite fallback warning: %s", col_exc)
             logger.info("Fallback sqlite DB initialized.")
             return
         except Exception as e2:
-            logger.exception("Fallback sqlite failed: %s", e2)
+            logger.exception("Fallback sqlite DB failed: %s", e2)
     sys.exit(1)
 
+# DB CRUD helpers
 async def get_user(session: AsyncSession, user_id: int) -> Dict:
     result = await session.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -220,9 +206,24 @@ def admin_action_kb(tx_db_id: int):
     return InlineKeyboardMarkup([[InlineKeyboardButton("✅ Approve", callback_data=f"admin_approve_{tx_db_id}"),
                                   InlineKeyboardButton("❌ Reject", callback_data=f"admin_reject_{tx_db_id}")]])
 
-# --- Handlers (all defined before main) ---
+# Scheduled job (defined before main so scheduler can reference)
+async def daily_profit_job():
+    async with async_session() as session:
+        result = await session.execute(select(User))
+        for user in result.scalars():
+            total = float(user.balance or 0) + float(user.balance_in_process or 0)
+            if total <= 0:
+                continue
+            profit = round(total * 0.015, 2)
+            await update_user(session, user.id,
+                              daily_profit=profit,
+                              total_profit=float(user.total_profit or 0) + profit,
+                              balance=float(user.balance or 0) + profit)
+            await log_transaction(session, user_id=user.id, type='profit', amount=profit, status='credited')
 
-# Menu callback (central router)
+# --- Handlers (defined before registration) ---
+
+# Menu callback
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
@@ -317,7 +318,7 @@ async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     async with async_session() as session:
         await send_balance_message(update.effective_message, session, update.effective_user.id)
 
-# Invest handlers
+# Invest flow
 async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.")
     return INVEST_AMOUNT
@@ -382,8 +383,8 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
         return ConversationHandler.END
     async with async_session() as session:
         tx_db_id, tx_ref = await log_transaction(session, user_id=user_id, ref=None, type='invest', amount=amount, status='pending', proof=str(proof), wallet=MASTER_WALLET, network=MASTER_NETWORK, created_at=datetime.utcnow())
-    await query.message.reply_text(f"✅ Deposit proof received. Your deposit reference number is <b>{tx_ref}</b>. Processing...", parse_mode="HTML", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
-    admin_text = (f"New INVEST request #{tx_db_id} (ref {tx_ref})\nUser: {user_id}\nAmount: {amount:.2f}$\nWallet: {MASTER_WALLET}\nNetwork: {MASTER_NETWORK}\nProof: {proof}")
+    await query.message.reply_text(f"✅ Deposit proof received. Reference: <b>{tx_ref}</b>. Processing...", parse_mode="HTML", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+    admin_text = f"New INVEST #{tx_db_id} (ref {tx_ref})\nUser: {user_id}\nAmount: {amount:.2f}$\nProof: {proof}"
     try:
         if ADMIN_ID and ADMIN_ID != 0:
             await context.application.bot.send_message(chat_id=ADMIN_ID, text=admin_text, reply_markup=admin_action_kb(tx_db_id))
@@ -393,7 +394,7 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     context.user_data.pop('invest_proof', None)
     return ConversationHandler.END
 
-# ---- WITHDRAW FLOW ----
+# Withdraw flow
 async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("💸 Enter the amount you want to withdraw (numbers only, e.g., 50.00). Send /cancel to abort.")
     return WITHDRAW_AMOUNT
@@ -419,16 +420,16 @@ async def withdraw_amount_received(update: Update, context: ContextTypes.DEFAULT
         user = await get_user(session, user_id)
     balance = float(user['balance'] or 0)
     if amount > balance:
-        await update.effective_message.reply_text(f"Insufficient balance. Your available balance is {balance:.2f}$.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+        await update.effective_message.reply_text(f"Insufficient balance: {balance:.2f}$", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
         return WITHDRAW_AMOUNT
     context.user_data['withdraw_amount'] = amount
     saved_wallet = user.get('wallet_address')
     saved_network = user.get('wallet_network')
     if saved_wallet:
-        await update.effective_message.reply_text(f"Your saved wallet:\nWallet: <code>{saved_wallet}</code>\nNetwork: <b>{saved_network}</b>\n\nSend 'yes' to use it or send a new wallet and optional network.", parse_mode="HTML")
+        await update.effective_message.reply_text(f"Saved wallet:\nWallet: <code>{saved_wallet}</code>\nNetwork: <b>{saved_network}</b>\n\nSend 'yes' to use it or send a new wallet and optional network.", parse_mode="HTML")
         return WITHDRAW_WALLET
     else:
-        await update.effective_message.reply_text("No saved wallet. Send wallet address and optional network (e.g., <code>0xabc... ERC20</code>).", parse_mode="HTML")
+        await update.effective_message.reply_text("Send wallet address and optional network (e.g., 0xabc... ERC20).", parse_mode="HTML")
         return WITHDRAW_WALLET
 
 async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -446,7 +447,7 @@ async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT
     else:
         parts = text.split()
         if not parts:
-            await msg.reply_text("No wallet address detected. Please send a wallet address and optional network.")
+            await msg.reply_text("No wallet detected. Send wallet address and optional network.")
             return WITHDRAW_WALLET
         wallet_address = parts[0]
         wallet_network = parts[1] if len(parts) > 1 else ''
@@ -456,7 +457,7 @@ async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT
     wallet_network = wallet_network or ''
     amount = context.user_data.get('withdraw_amount')
     if amount is None:
-        await msg.reply_text("Missing withdrawal amount. Start again with /withdraw.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+        await msg.reply_text("Missing amount. Start again with /withdraw.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
         context.user_data.pop('withdraw_wallet', None)
         context.user_data.pop('withdraw_network', None)
         return ConversationHandler.END
@@ -479,13 +480,13 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
     wallet = context.user_data.get('withdraw_wallet')
     network = context.user_data.get('withdraw_network', '')
     if amount is None or wallet is None:
-        await query.message.reply_text("Missing data. Start withdrawal again.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+        await query.message.reply_text("Missing data. Start again.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
         return ConversationHandler.END
     async with async_session() as session:
         user = await get_user(session, user_id)
         balance = float(user['balance'] or 0)
         if amount > balance:
-            await query.message.reply_text(f"Insufficient balance ({balance:.2f}$). Withdrawal aborted.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
+            await query.message.reply_text(f"Insufficient balance ({balance:.2f}$).", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
             context.user_data.pop('withdraw_amount', None)
             context.user_data.pop('withdraw_wallet', None)
             return ConversationHandler.END
@@ -494,25 +495,24 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
         await update_user(session, user_id, balance=new_balance, balance_in_process=new_in_process)
         tx_db_id, tx_ref = await log_transaction(session, user_id=user_id, ref=None, type='withdraw', amount=amount, status='pending', proof='', wallet=wallet, network=network, created_at=datetime.utcnow())
     await query.message.reply_text(f"✅ Withdrawal request #{tx_ref} submitted and is pending admin approval.", reply_markup=build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL))
-    admin_text = f"New WITHDRAW request #{tx_db_id} (ref {tx_ref})\nUser: {user_id}\nAmount: {amount:.2f}$\nWallet: {wallet}\nNetwork: {network}"
+    admin_text = f"New WITHDRAW #{tx_db_id} (ref {tx_ref})\nUser: {user_id}\nAmount: {amount:.2f}$\nWallet: {wallet}"
     try:
         if ADMIN_ID and ADMIN_ID != 0:
             await context.application.bot.send_message(chat_id=ADMIN_ID, text=admin_text, reply_markup=admin_action_kb(tx_db_id))
     except Exception:
-        logger.exception("Failed to notify admin for withdraw")
+        logger.exception("Failed notifying admin for withdraw")
     context.user_data.pop('withdraw_amount', None)
     context.user_data.pop('withdraw_wallet', None)
     context.user_data.pop('withdraw_network', None)
     return ConversationHandler.END
 
-# ---- ADMIN CALLBACKS ----
+# Admin callbacks (approve/reject idempotent)
 async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     if not data:
         return
-    logger.info("admin_callback_handler data=%s", data)
     try:
         if data.startswith("admin_approve_") or data.startswith("admin_reject_"):
             parts = data.split("_")
@@ -525,7 +525,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                     await query.message.reply_text("Transaction not found.")
                     return
                 if tx.status != 'pending':
-                    await query.message.reply_text(f"Transaction already processed (status: {tx.status}). No further action allowed.")
+                    await query.message.reply_text(f"Transaction already processed (status: {tx.status}).")
                     return
                 if action == 'approve':
                     if tx.type == 'invest':
@@ -534,33 +534,32 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                         await update_user(session, tx.user_id, balance=new_balance)
                         await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='credited'))
                         await session.commit()
-                        await query.message.reply_text(f"Invest transaction #{tx_db_id} (ref {tx.ref}) credited.")
+                        await query.message.reply_text(f"Invest #{tx_db_id} credited.")
                         try:
-                            await context.application.bot.send_message(chat_id=tx.user_id, text=f"✅ Your deposit (ref {tx.ref}) has been approved. Amount credited: {float(tx.amount):.2f}$.")
+                            await context.application.bot.send_message(chat_id=tx.user_id, text=f"✅ Your deposit (ref {tx.ref}) approved. Amount credited: {float(tx.amount):.2f}$.")
                         except Exception:
-                            logger.exception("Failed to notify user about invest credit")
+                            logger.exception("Notify user invest failed")
                     elif tx.type == 'withdraw':
                         user = await get_user(session, tx.user_id)
                         new_in_process = max(0.0, float(user['balance_in_process'] or 0) - float(tx.amount or 0))
                         await update_user(session, tx.user_id, balance_in_process=new_in_process)
                         await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='completed'))
                         await session.commit()
-                        await query.message.reply_text(f"Withdraw transaction #{tx_db_id} (ref {tx.ref}) completed.")
+                        await query.message.reply_text(f"Withdraw #{tx_db_id} completed.")
                         try:
-                            await context.application.bot.send_message(chat_id=tx.user_id, text=f"✅ Your withdrawal (ref {tx.ref}) has been completed by admin.")
+                            await context.application.bot.send_message(chat_id=tx.user_id, text=f"✅ Your withdrawal (ref {tx.ref}) completed.")
                         except Exception:
-                            logger.exception("Failed to notify user about withdraw completion")
-                    else:
-                        await query.message.reply_text("Unknown transaction type.")
+                            logger.exception("Notify user withdraw failed")
                 else:
+                    # reject
                     if tx.type == 'invest':
                         await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='rejected'))
                         await session.commit()
-                        await query.message.reply_text(f"Invest transaction #{tx_db_id} (ref {tx.ref}) rejected.")
+                        await query.message.reply_text(f"Invest #{tx_db_id} rejected.")
                         try:
-                            await context.application.bot.send_message(chat_id=tx.user_id, text=f"❌ Your deposit (ref {tx.ref}) was rejected by admin.")
+                            await context.application.bot.send_message(chat_id=tx.user_id, text=f"❌ Your deposit (ref {tx.ref}) was rejected.")
                         except Exception:
-                            logger.exception("Failed to notify user about invest rejection")
+                            logger.exception("Notify user invest reject failed")
                     elif tx.type == 'withdraw':
                         user = await get_user(session, tx.user_id)
                         new_in_process = max(0.0, float(user['balance_in_process'] or 0) - float(tx.amount or 0))
@@ -568,20 +567,17 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
                         await update_user(session, tx.user_id, balance=new_balance, balance_in_process=new_in_process)
                         await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='rejected'))
                         await session.commit()
-                        await query.message.reply_text(f"Withdraw transaction #{tx_db_id} (ref {tx.ref}) rejected and funds restored.")
+                        await query.message.reply_text(f"Withdraw #{tx_db_id} rejected and funds restored.")
                         try:
-                            await context.application.bot.send_message(chat_id=tx.user_id, text=f"❌ Your withdrawal (ref {tx.ref}) was rejected by admin. Funds restored.")
+                            await context.application.bot.send_message(chat_id=tx.user_id, text=f"❌ Your withdrawal (ref {tx.ref}) was rejected. Funds restored.")
                         except Exception:
-                            logger.exception("Failed to notify user about withdraw rejection")
-                    else:
-                        await query.message.reply_text("Unknown transaction type.")
+                            logger.exception("Notify user withdraw reject failed")
     except Exception as exc:
         logger.exception("Error in admin_callback_handler: %s", exc)
         try:
-            await query.message.reply_text("An internal error occurred while processing this action.")
+            await query.message.reply_text("Internal error while processing admin action.")
         except Exception:
             pass
-    return
 
 # /pending admin
 def _is_admin(user_id: int) -> bool:
@@ -603,15 +599,15 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
         if deposits:
             await update.effective_message.reply_text("Pending Deposits:")
             for tx in deposits:
-                text_msg = (f"DB id: {tx.id}  Ref: {tx.ref}\nUser: {tx.user_id}\nAmount: {float(tx.amount):.2f}$\nProof: {tx.proof or '-'}\nCreated: {tx.created_at}")
+                text_msg = (f"DB id: {tx.id} Ref: {tx.ref}\nUser: {tx.user_id}\nAmount: {float(tx.amount):.2f}$\nProof: {tx.proof or '-'}\nCreated: {tx.created_at}")
                 await update.effective_message.reply_text(text_msg, reply_markup=admin_action_kb(tx.id))
         if withdraws:
             await update.effective_message.reply_text("Pending Withdrawals:")
             for tx in withdraws:
-                text_msg = (f"DB id: {tx.id}  Ref: {tx.ref}\nUser: {tx.user_id}\nAmount: {float(tx.amount):.2f}$\nWallet: {tx.wallet or '-'}\nCreated: {tx.created_at}")
+                text_msg = (f"DB id: {tx.id} Ref: {tx.ref}\nUser: {tx.user_id}\nAmount: {float(tx.amount):.2f}$\nWallet: {tx.wallet or '-'}\nCreated: {tx.created_at}")
                 await update.effective_message.reply_text(text_msg, reply_markup=admin_action_kb(tx.id))
 
-# History
+# /history
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ef_msg = update.effective_message
     user_id = update.effective_user.id
@@ -635,8 +631,7 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await ef_msg.reply_text(f"Status: {status} ({len(group)})")
             for tx in group:
                 created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else "-"
-                text_msg = (f"DB id: {tx.id}  Ref:{tx.ref}  Type:{(tx.type or '').upper()}  User:{tx.user_id}  Amount:{float(tx.amount):.2f}$  Created:{created}")
-                await ef_msg.reply_text(text_msg)
+                await ef_msg.reply_text(f"DB id: {tx.id} Ref:{tx.ref} Type:{(tx.type or '').upper()} User:{tx.user_id} Amount:{float(tx.amount):.2f}$ Created:{created}")
         return
     limit = 50
     async with async_session() as session:
@@ -651,14 +646,14 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ttype = (tx.type or "").upper()
         amount = f"{float(tx.amount):.2f}$" if tx.amount is not None else "-"
         status = tx.status or "-"
-        created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else "-"
+        created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else ""
         lines.append(f"Ref:{ref} | {ttype} | {amount} | {status} | {created}")
     chunk_size = 20
     for i in range(0, len(lines), chunk_size):
         await ef_msg.reply_text("\n".join(lines[i:i+chunk_size]))
     return
 
-# Wallet command
+# wallet command
 async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     args = context.args
@@ -678,14 +673,12 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.effective_message.reply_text("No withdrawal wallet saved. Set it with /wallet <address> [network]")
 
+# info / help / settings entry
 async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("ℹ️ Information\n\nWelcome to AiCrypto bot.")
-
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = ("/start - main menu\n/balance\n/invest\n/withdraw\n/wallet\n/history\n/history all (admin)\n/information\n/help")
     await update.effective_message.reply_text(help_text)
-
-# Settings entry
 async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.answer()
@@ -694,7 +687,7 @@ async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TY
         await update.effective_message.reply_text("Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).")
     return WITHDRAW_WALLET
 
-# Cancel
+# cancel & start
 async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE):
     if context and getattr(context, "user_data", None):
         context.user_data.clear()
@@ -702,12 +695,11 @@ async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TY
         await update.callback_query.answer()
     return ConversationHandler.END
 
-# Start (main menu)
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = build_inline_menu(full_width=MENU_FULL_WIDTH, support_url=SUPPORT_URL)
     await update.effective_message.reply_text("Main Menu", reply_markup=kb)
 
-# === MAIN ===
+# === MAIN: register handlers and run ===
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -749,10 +741,7 @@ def main():
     app.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
     app.add_handler(CommandHandler("pending", admin_pending_command))
 
-    # redundant safety registrations
-    app.add_handler(CommandHandler("invest", invest_cmd_handler))
-    app.add_handler(CommandHandler("withdraw", withdraw_cmd_handler))
-
+    # scheduler
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
