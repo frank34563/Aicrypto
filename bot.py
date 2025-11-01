@@ -1,17 +1,24 @@
-# Full final bot.py — Complete bot with compact main menu matching the Information bubble width.
-# - Inline main menu (no reply keyboard) with compact two-column UI
-# - Referral "Copy Link" button uses switch_inline_query_current_chat and leaves link message in chat
-# - History: buttons show DATE | AMOUNT | TYPE, with Prev/Next/Exit, and details include Back/Exit
-# - Invest and Withdraw request messages (pending) formatted like samples
-# - Admin approvals send Deposit Receipt and Withdrawal Receipt formatted like samples
+# Full final bot.py — Compact main menu with image header, formatted deposit/withdraw flows,
+# history, admin approvals, and compact two-column keyboard tuned to the "Information" bubble width.
 #
-# Environment variables required:
+# Features:
+# - /start sends MAIN_MENU_IMAGE (if set) with inline keyboard underneath, otherwise text "Main Menu"
+# - Compact two-column inline keyboard (tlen=10) tuned to match message bubble width
+# - Invest and Withdraw flows: request messages saved as pending transactions, with admin notifications
+# - Admin approvals: send Deposit Receipt / Withdrawal Receipt formatted messages to users
+# - History view: paginated, each item button shows "DATE | AMOUNT | TYPE", details include Back/Exit
+# - Database using SQLAlchemy (async) with fallback to sqlite if needed
+#
+# Environment variables used:
 # - BOT_TOKEN (required)
 # - ADMIN_ID (required, numeric)
 # - MASTER_WALLET (recommended)
 # - MASTER_NETWORK (recommended)
 # - DATABASE_URL (optional; if not set, sqlite will be used)
 # - ADMIN_LOG_CHAT_ID (optional) — chat id for admin audit logs
+# - SUPPORT_USER / SUPPORT_URL (optional)
+# - MAIN_MENU_IMAGE (optional) — URL, Telegram file_id, or local path to image used as menu header
+# - MENU_FULL_TWO_COLUMN (optional) — default true; set to false to revert to simple two-column layout
 
 import os
 import logging
@@ -26,6 +33,7 @@ from telegram import (
     Update,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    InputFile,
 )
 from telegram.ext import (
     Application,
@@ -57,8 +65,8 @@ MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbc...')
 MASTER_NETWORK = os.getenv('MASTER_NETWORK', 'TRC20')
 SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
 SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else "https://t.me/")
+MAIN_MENU_IMAGE = os.getenv('MAIN_MENU_IMAGE')  # URL, file_id or local path (optional)
 
-# Keep the option to toggle two-column/full UI; default true
 MENU_FULL_TWO_COLUMN = os.getenv('MENU_FULL_TWO_COLUMN', 'true').lower() in ('1','true','yes','on')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
@@ -198,16 +206,12 @@ async def log_transaction(session: AsyncSession, **data):
 INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, WITHDRAW_CONFIRM, HISTORY_PAGE, HISTORY_DETAILS = range(8)
 
 # -----------------------
-# UI helpers and validation (compact menu)
+# UI helpers and validation (compact)
 # -----------------------
 
 ZWSP = "\u200b"
 
 def _compact_pad(label: str, target: int = 10) -> str:
-    """
-    Minimal padding for compact buttons. target controls the approximate visible width.
-    Use a small target (8-12) to match information-bubble width on most clients.
-    """
     plain = label.replace(ZWSP, "")
     if len(plain) >= target:
         return label
@@ -217,10 +221,6 @@ def _compact_pad(label: str, target: int = 10) -> str:
     return (" " * left) + label + (" " * right) + ZWSP
 
 def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN) -> InlineKeyboardMarkup:
-    """
-    Compact two-column inline keyboard tuned to match the Information bubble width.
-    If MENU_FULL_TWO_COLUMN is False, falls back to the simple two-column keyboard.
-    """
     if not full_two_column:
         rows = []
         rows.append([InlineKeyboardButton("💰 Balance", callback_data="menu_balance"),
@@ -234,9 +234,7 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN) -> In
         rows.append([InlineKeyboardButton("⨉ Exit", callback_data="menu_exit")])
         return InlineKeyboardMarkup(rows)
 
-    # Tweak this number if you need slightly wider or narrower buttons on your device
     tlen = 10
-
     left_right = [
         ("💰 Balance", "menu_balance", "📈 Invest", "menu_invest"),
         ("🧾 History", "menu_history", "💸 Withdraw", "menu_withdraw"),
@@ -255,10 +253,8 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN) -> In
             right_btn = InlineKeyboardButton(r, callback_data=r_cb)
         rows.append([left_btn, right_btn])
 
-    # Single compact Exit row
     exit_label = _compact_pad("⨉ Exit", target=(tlen*2)//2)
     rows.append([InlineKeyboardButton(exit_label, callback_data="menu_exit")])
-
     return InlineKeyboardMarkup(rows)
 
 def is_probable_wallet(address: str) -> bool:
@@ -400,6 +396,28 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 # -----------------------
+# Start handler — sends image if MAIN_MENU_IMAGE provided
+# -----------------------
+
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    kb = build_main_menu_keyboard()
+    if MAIN_MENU_IMAGE:
+        try:
+            if os.path.exists(MAIN_MENU_IMAGE):
+                img = InputFile(MAIN_MENU_IMAGE)
+                await context.bot.send_photo(chat_id=chat.id, photo=img, caption="Main Menu", reply_markup=kb)
+            else:
+                await context.bot.send_photo(chat_id=chat.id, photo=MAIN_MENU_IMAGE, caption="Main Menu", reply_markup=kb)
+            return
+        except Exception:
+            logger.exception("Failed to send MAIN_MENU_IMAGE; falling back to text menu")
+    try:
+        await update.effective_message.reply_text("Main Menu", reply_markup=kb)
+    except Exception:
+        await update.effective_message.reply_text("Main Menu", reply_markup=kb)
+
+# -----------------------
 # Balance helper
 # -----------------------
 
@@ -415,14 +433,12 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
     except Exception:
         await query_or_message.reply_text(msg, parse_mode="HTML", reply_markup=build_main_menu_keyboard())
 
-async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    async with async_session() as session:
-        await send_balance_message(update.effective_message, session, update.effective_user.id)
-
 # -----------------------
-# INVEST flow
+# INVEST / WITHDRAW / HISTORY / ADMIN flows
+# Full implementations are below.
 # -----------------------
 
+# INVEST FLOW
 async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.", reply_markup=None)
     return INVEST_AMOUNT
@@ -535,10 +551,7 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     context.user_data.pop('invest_proof', None)
     return ConversationHandler.END
 
-# -----------------------
-# WITHDRAW flow
-# -----------------------
-
+# WITHDRAW FLOW
 async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("💸 Enter the amount you want to withdraw (numbers only). Send /cancel to abort.")
     return WITHDRAW_AMOUNT
@@ -1006,7 +1019,7 @@ async def history_back_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await history_command(update, context)
 
 # -----------------------
-# Utilities: cancel, start, commands
+# Utilities: cancel, wallet, help, info, start
 # -----------------------
 
 async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE):
@@ -1015,10 +1028,6 @@ async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TY
     if update and getattr(update, "callback_query", None):
         await update.callback_query.answer()
     return ConversationHandler.END
-
-async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    async with async_session() as session:
-        await send_balance_message(update.effective_message, session, update.effective_user.id)
 
 async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1040,29 +1049,12 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.effective_message.reply_text("No withdrawal wallet saved. Set it with /wallet <address> [network]")
 
-async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await history_command(update, context)
-
 async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("ℹ️ Information\nSee menu for actions.", reply_markup=build_main_menu_keyboard())
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = ("/start - main menu\n/balance\n/invest\n/withdraw\n/wallet\n/history\n/history all (admin)\n/information\n/help")
     await update.effective_message.reply_text(help_text)
-
-async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.message.reply_text("Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).")
-    else:
-        await update.effective_message.reply_text("Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).")
-    return WITHDRAW_WALLET
-
-async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        await update.effective_message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard())
-    except Exception:
-        await update.effective_message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard())
 
 # -----------------------
 # MAIN wiring
@@ -1095,7 +1087,6 @@ def main():
     )
 
     app.add_handler(conv_handler)
-
     app.add_handler(CallbackQueryHandler(admin_start_action_callback, pattern='^admin_start_(approve|reject)_\\d+$'))
     app.add_handler(CallbackQueryHandler(admin_confirm_callback, pattern='^admin_confirm_(approve|reject)_\\d+$'))
     app.add_handler(CallbackQueryHandler(admin_cancel_callback, pattern='^admin_cancel_\\d+$'))
@@ -1106,9 +1097,10 @@ def main():
 
     app.add_handler(CallbackQueryHandler(menu_callback))
     app.add_handler(CommandHandler("start", start_handler))
-    app.add_handler(CommandHandler("balance", balance_command))
+    app.add_handler(CommandHandler("balance", lambda u,c: asyncio.run_coroutine_threadsafe(balance_command(u,c), asyncio.get_event_loop())))
+    # balance_command uses async session; add CommandHandler wrapper to run in event loop
     app.add_handler(CommandHandler("wallet", wallet_command))
-    app.add_handler(CommandHandler("history", history_cmd))
+    app.add_handler(CommandHandler("history", lambda u,c: asyncio.run_coroutine_threadsafe(history_cmd(u,c), asyncio.get_event_loop())))
     app.add_handler(CommandHandler("information", information_command))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("pending", admin_pending_command))
