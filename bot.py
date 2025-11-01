@@ -1,5 +1,7 @@
 # Full final bot.py — Complete replacement with Settings restored (Set/Update Withdrawal Wallet)
 # and Language selection integrated (auto via Telegram language_code, persistent preference).
+# Also patched: added balance_command wrapper so CommandHandler("balance", balance_command) is defined.
+#
 # This file is ready to copy-paste as your bot.py and run after setting environment variables.
 #
 # Features:
@@ -513,7 +515,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return
 
 # -----------------------
-# Balance helper
+# Balance helper + command wrapper (ADDED balance_command)
 # -----------------------
 
 async def send_balance_message(query_or_message, session: AsyncSession, user_id: int):
@@ -531,6 +533,15 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
         await query_or_message.reply_text(msg, parse_mode="HTML", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
 
 async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with async_session() as session:
+        await send_balance_message(update.effective_message, session, update.effective_user.id)
+
+# Wrapper for /balance command (added to fix NameError)
+async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    /balance command handler wrapper — fetches the user's data and replies with the localized
+    balance message using send_balance_message helper.
+    """
     async with async_session() as session:
         await send_balance_message(update.effective_message, session, update.effective_user.id)
 
@@ -997,7 +1008,7 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception:
             logger.exception("Failed to send pending tx %s to admin", tx.id)
 
-# HISTORY handlers (unchanged)...
+# HISTORY handlers...
 def history_list_item_text(tx: Transaction) -> str:
     created = tx.created_at.strftime("%Y-%m-%d") if tx.created_at else "-"
     ttype_raw = (tx.type or "").lower()
