@@ -1,6 +1,6 @@
-# Full final bot.py — History buttons show only DATE | AMOUNT | TYPE and details include Back/Exit.
-# Referral button now shows a copyable URL (no callback), history details include Back and Exit,
-# history list includes Prev/Next/Exit, and Exit returns to the Main Menu.
+# Full final bot.py — Referral "Copy Link" button uses switch_inline_query_current_chat and leaves
+# the referral link message in chat. Back/Exit returns to Main Menu by editing the menu message.
+# History buttons show only DATE | AMOUNT | TYPE and details include Back/Exit.
 #
 # Environment variables required:
 # - BOT_TOKEN (required)
@@ -312,18 +312,22 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_history":
         await history_command(update, context)
     elif data == "menu_referrals":
-        # Show a copyable referral link (URL button) and a Back-to-menu Exit button
+        # Send a separate message containing the referral link (so it remains in chat)
+        # and provide a single "Copy Link" style button that inserts the link into the current chat input.
         user_id = query.from_user.id
         bot_username = (await context.bot.get_me()).username
         referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+        # Message text with code block of the link so user can copy later
         text = (f"👥 Referrals\n\nShare this link to invite friends and earn rewards:\n\n"
-                f"<code>{referral_link}</code>\n\nTap the button below to open and copy the link.")
+                f"<code>{referral_link}</code>\n\nUse the button below to paste the link into your input field for quick copying/sharing.")
+        # Use switch_inline_query_current_chat so Telegram inserts the link into the user's input field when they tap the button.
         kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔗 Open / Copy Link", url=referral_link)],
+            [InlineKeyboardButton("🔗 Copy Link", switch_inline_query_current_chat=referral_link)],
             [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]
         ])
+        # Send a new message (reply to the menu message) so it stays in chat. Then leave the menu message unchanged; the Back button will edit the menu message back to Main Menu.
         try:
-            await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
         except Exception:
             await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
     elif data == "menu_settings":
@@ -811,7 +815,7 @@ async def history_details_callback(update: Update, context: ContextTypes.DEFAULT
     tx_type = (tx.type or "").upper()
     status = (tx.status or "").upper()
     ref = tx.ref or "-"
-    proof = tx.proof or "-"
+    proof = tx.proof or ""
     wallet = tx.wallet or ""
     network = tx.network or "-"
 
