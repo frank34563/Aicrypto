@@ -1,5 +1,6 @@
 # Full final bot.py — History buttons show only DATE | AMOUNT | TYPE and details include Back/Exit.
-# Replace your current bot.py with this file and restart.
+# Referral button now shows a copyable URL (no callback), history details include Back and Exit,
+# history list includes Prev/Next/Exit, and Exit returns to the Main Menu.
 #
 # Environment variables required:
 # - BOT_TOKEN (required)
@@ -295,6 +296,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer()
     if not data:
         return
+    # Let ConversationHandler handle invest/withdraw entrypoints and admin_* callbacks
     if data in ("menu_invest", "menu_withdraw") or data.startswith("admin_"):
         return
     if data == "menu_exit":
@@ -310,12 +312,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_history":
         await history_command(update, context)
     elif data == "menu_referrals":
+        # Show a copyable referral link (URL button) and a Back-to-menu Exit button
         user_id = query.from_user.id
-        async with async_session() as session:
-            ref = await get_user(session, user_id)
-        text = (f"👥 Referrals\nCount: {ref.get('referral_count',0)}\nEarnings: {float(ref.get('referral_earnings') or 0):.2f}$\n"
-                f"Share: https://t.me/{(await context.bot.get_me()).username}?start=ref_{user_id}")
-        await query.edit_message_text(text, parse_mode="HTML", reply_markup=build_main_menu_keyboard())
+        bot_username = (await context.bot.get_me()).username
+        referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+        text = (f"👥 Referrals\n\nShare this link to invite friends and earn rewards:\n\n"
+                f"<code>{referral_link}</code>\n\nTap the button below to open and copy the link.")
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔗 Open / Copy Link", url=referral_link)],
+            [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]
+        ])
+        try:
+            await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
     elif data == "menu_settings":
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("Set/Update Withdrawal Wallet", callback_data="settings_set_wallet")],
