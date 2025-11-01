@@ -1,29 +1,16 @@
-# Full final bot.py — Complete replacement with Settings restored (Set/Update Withdrawal Wallet)
-# and Language selection integrated (auto via Telegram language_code, persistent preference).
-# Also patched: added balance_command wrapper so CommandHandler("balance", balance_command) is defined.
+# Complete bot.py — fully integrated, corrected and self-contained.
+# - Includes i18n (auto + manual), Settings with Language and Set/Update Withdrawal Wallet
+# - Compact main menu keyboard tuned to information bubble width
+# - Invest/Withdraw flows, admin approval flows, history, daily profit job
+# - DB init with migration attempts for added columns
 #
-# This file is ready to copy-paste as your bot.py and run after setting environment variables.
-#
-# Features:
-# - Compact two-column main menu tuned to the "Information" bubble width
-# - Send photo + inline keyboard supported (re-usable file_id recommended)
-# - Invest/Withdraw flows with proof upload and admin approval
-# - History with compact list buttons and detailed view
-# - Language detection & selection:
-#     - Auto-detect from Telegram language_code (best-effort)
-#     - Persistent per-user preferred_language: 'auto' to follow Telegram, or explicit language code
-#     - Settings → Language opens selector; changes saved in DB
-# - Settings includes "Set/Update Withdrawal Wallet" and "Language" buttons
-#
-# Required environment variables:
-# - BOT_TOKEN
-# - ADMIN_ID
-# Optional:
-# - MASTER_WALLET, MASTER_NETWORK, SUPPORT_USER, SUPPORT_URL, DATABASE_URL, ADMIN_LOG_CHAT_ID
-#
-# Notes:
-# - Ensure you restart the bot process after replacing this file.
-# - If you want to persist uploaded menu image file_id, store it in context.bot_data or DB.
+# Environment variables required:
+# - BOT_TOKEN (required)
+# - ADMIN_ID (required, numeric)
+# - MASTER_WALLET (recommended)
+# - MASTER_NETWORK (recommended)
+# - DATABASE_URL (optional; if not set, sqlite will be used)
+# - ADMIN_LOG_CHAT_ID (optional) — chat id for admin audit logs
 
 import os
 import logging
@@ -38,6 +25,7 @@ from telegram import (
     Update,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    InputMediaPhoto,
 )
 from telegram.ext import (
     Application,
@@ -103,7 +91,7 @@ class User(Base):
     referrer_id = Column(BigInteger, nullable=True)
     wallet_address = Column(String)
     wallet_network = Column(String)
-    preferred_language = Column(String, nullable=True)  # "auto" or language code
+    preferred_language = Column(String, nullable=True)  # new column for language preference
     joined_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -131,6 +119,7 @@ async def _create_all_with_timeout(engine_to_use):
 async def ensure_columns():
     async with engine.begin() as conn:
         try:
+            # best-effort ALTERs; some DB backends may ignore IF NOT EXISTS
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_network VARCHAR"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language VARCHAR"))
             await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS proof VARCHAR"))
@@ -138,7 +127,6 @@ async def ensure_columns():
             await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS network VARCHAR"))
             await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS ref VARCHAR"))
         except Exception:
-            # best-effort for DBs not supporting IF NOT EXISTS
             pass
 
 async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bool = True):
@@ -212,7 +200,7 @@ async def log_transaction(session: AsyncSession, **data):
 INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, WITHDRAW_CONFIRM, HISTORY_PAGE, HISTORY_DETAILS = range(8)
 
 # -----------------------
-# I18N: translations and helpers
+# I18N: small translation bundle and helpers
 # -----------------------
 TRANSLATIONS = {
     "en": {
@@ -264,6 +252,13 @@ def t(lang: str, key: str, **kwargs) -> str:
     return txt
 
 async def get_user_language(session: AsyncSession, user_id: int, update: Optional[Update] = None) -> str:
+    """
+    Resolve effective language:
+      1) If user.preferred_language is set and not 'auto' -> use it
+      2) Else try update.effective_user.language_code (Telegram)
+      3) Else DEFAULT_LANG
+    If preferred_language == 'auto' then prefer Telegram language_code (if supported).
+    """
     result = await session.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
     preferred = None
@@ -274,7 +269,7 @@ async def get_user_language(session: AsyncSession, user_id: int, update: Optiona
         if preferred in SUPPORTED_LANGS:
             return preferred
 
-    # attempt Telegram language_code from update
+    # try Telegram lang from update
     if update and getattr(update, "effective_user", None):
         tlang = (update.effective_user.language_code or "").lower()
         if "-" in tlang:
@@ -282,13 +277,19 @@ async def get_user_language(session: AsyncSession, user_id: int, update: Optiona
         if tlang in SUPPORTED_LANGS:
             return tlang
 
-    # if user explicitly chose 'auto' but no update language available, fall back to default
+    # if the user explicitly set "auto", still try Telegram (handled above)
+    if preferred == "auto" and update and getattr(update, "effective_user", None):
+        tlang = (update.effective_user.language_code or "").lower()
+        if "-" in tlang:
+            tlang = tlang.split("-")[0]
+        if tlang in SUPPORTED_LANGS:
+            return tlang
+
     return DEFAULT_LANG
 
 # -----------------------
-# UI helpers and validation (compact)
+# UI helpers and validation (compact to match Information bubble)
 # -----------------------
-
 ZWSP = "\u200b"
 
 def _compact_pad(label: str, target: int = 10) -> str:
@@ -301,12 +302,16 @@ def _compact_pad(label: str, target: int = 10) -> str:
     return (" " * left) + label + (" " * right) + ZWSP
 
 def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang: str = DEFAULT_LANG) -> InlineKeyboardMarkup:
+    """
+    Compact two-column inline keyboard tuned to match the Information bubble width.
+    Accepts lang to render button labels localized.
+    """
     labels = {
         "balance": "💰 " + {"en":"Balance","fr":"Solde","es":"Saldo"}.get(lang, "Balance"),
         "invest": "📈 " + {"en":"Invest","fr":"Investir","es":"Invertir"}.get(lang, "Invest"),
         "history": "🧾 " + {"en":"History","fr":"Historique","es":"Historial"}.get(lang, "History"),
         "withdraw": "💸 " + {"en":"Withdraw","fr":"Retirer","es":"Retirar"}.get(lang, "Withdraw"),
-        "referrals": "👥 " + {"en":"Referrals","fr":"Parrains","es":"Referidos"}.get(lang, "Referrals"),
+        "referrals": "👥 " + {"en":"Referrals","fr":"Referals","es":"Referidos"}.get(lang, "Referrals"),
         "settings": "⚙️ " + {"en":"Settings","fr":"Paramètres","es":"Ajustes"}.get(lang, "Settings"),
         "information": "ℹ️ " + {"en":"Information","fr":"Information","es":"Información"}.get(lang, "Information"),
         "help": "❓ " + {"en":"Help","fr":"Aide","es":"Ayuda"}.get(lang, "Help"),
@@ -380,7 +385,6 @@ def _utc_to_pdt_str(dt: datetime) -> str:
 # -----------------------
 # Messaging and admin helpers
 # -----------------------
-
 def admin_confirm_kb(action: str, tx_db_id: int):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ Yes", callback_data=f"admin_confirm_{action}_{tx_db_id}"),
@@ -414,9 +418,8 @@ async def post_admin_log(bot, message: str):
             logger.exception("Failed to post admin log")
 
 # -----------------------
-# Daily job (unchanged)
+# Daily profit job
 # -----------------------
-
 async def daily_profit_job():
     PROFIT_RATE = 0.015
     async with async_session() as session:
@@ -437,8 +440,50 @@ async def daily_profit_job():
                 logger.exception("daily_profit_job: failed for user %s", getattr(user, "id", "<unknown>"))
 
 # -----------------------
-# Menu callback handler (restored wallet + language)
+# Menu / Settings / Language handlers
 # -----------------------
+def build_language_kb(current_lang: str) -> InlineKeyboardMarkup:
+    rows = []
+    rows.append([InlineKeyboardButton(TRANSLATIONS.get(current_lang, TRANSLATIONS[DEFAULT_LANG])["lang_auto"], callback_data="lang_auto")])
+    for code in SUPPORTED_LANGS:
+        label = TRANSLATIONS[DEFAULT_LANG].get(f"lang_{code}", LANG_DISPLAY.get(code, code))
+        rows.append([InlineKeyboardButton(label, callback_data=f"lang_{code}")])
+    rows.append([InlineKeyboardButton("◀ Back", callback_data="menu_settings")])
+    return InlineKeyboardMarkup(rows)
+
+async def settings_language_open_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    async with async_session() as session:
+        lang = await get_user_language(session, query.from_user.id, update=update)
+    await query.message.edit_text(t(lang, "settings_title") + "\n\n" + t(lang, "settings_language"), reply_markup=build_language_kb(lang))
+
+async def language_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data  # e.g. "lang_en" or "lang_auto"
+    user_id = query.from_user.id
+    selected = None
+    if data == "lang_auto":
+        selected = "auto"
+    elif data.startswith("lang_"):
+        selected = data.split("_",1)[1]
+
+    async with async_session() as session:
+        # create or update user's preferred_language
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        if not user:
+            user = User(id=user_id, preferred_language=selected)
+            session.add(user)
+            await session.commit()
+        else:
+            await session.execute(sa_update(User).where(User.id == user_id).values(preferred_language=selected))
+            await session.commit()
+        effective_lang = await get_user_language(session, user_id, update=update)
+
+    # send confirmation localized in effective language
+    await query.message.reply_text(t(effective_lang, "lang_set_success", lang=LANG_DISPLAY.get(effective_lang, effective_lang)))
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -447,11 +492,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data if query else None
     if not data:
         return
-    # allow conversation and admin flows to handle their patterns
     if data in ("menu_invest", "menu_withdraw") or data.startswith("admin_"):
         return
-
-    # Exit / Back to Main Menu
     if data == "menu_exit":
         await cancel_conv(update, context)
         try:
@@ -461,20 +503,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
         return
-
-    # Balance
     if data == "menu_balance":
         async with async_session() as session:
             await send_balance_message(query, session, query.from_user.id)
-        return
-
-    # History
-    if data == "menu_history":
+    elif data == "menu_history":
         await history_command(update, context)
-        return
-
-    # Referrals
-    if data == "menu_referrals":
+    elif data == "menu_referrals":
         user_id = query.from_user.id
         bot_username = (await context.bot.get_me()).username
         referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
@@ -490,34 +524,27 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
         except Exception:
             await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
-        return
-
-    # Settings (restore wallet + language)
-    if data == "menu_settings":
+    elif data == "menu_settings":
+        # include wallet and language buttons
         async with async_session() as session:
             lang = await get_user_language(session, query.from_user.id, update=update)
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("Set/Update Withdrawal Wallet", callback_data="settings_set_wallet")],
-            [InlineKeyboardButton(t(lang, "settings_language"), callback_data="settings_language")],
+            [InlineKeyboardButton(t(lang,"settings_language"), callback_data="settings_language")],
             [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]
         ])
         await query.edit_message_text(t(lang, "settings_title"), reply_markup=kb)
-        return
-
-    # Information
-    if data == "menu_info":
+    elif data == "menu_info":
         async with async_session() as session:
             lang = await get_user_language(session, query.from_user.id, update=update)
         info_text = t(lang, "info_text")
         await query.edit_message_text(info_text, reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+    else:
         return
 
-    return
-
 # -----------------------
-# Balance helper + command wrapper (ADDED balance_command)
+# Balance helper
 # -----------------------
-
 async def send_balance_message(query_or_message, session: AsyncSession, user_id: int):
     user = await get_user(session, user_id)
     async with session.begin():
@@ -536,19 +563,9 @@ async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     async with async_session() as session:
         await send_balance_message(update.effective_message, session, update.effective_user.id)
 
-# Wrapper for /balance command (added to fix NameError)
-async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /balance command handler wrapper — fetches the user's data and replies with the localized
-    balance message using send_balance_message helper.
-    """
-    async with async_session() as session:
-        await send_balance_message(update.effective_message, session, update.effective_user.id)
-
 # -----------------------
 # INVEST flow
 # -----------------------
-
 async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.", reply_markup=None)
     return INVEST_AMOUNT
@@ -664,7 +681,6 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
 # -----------------------
 # WITHDRAW flow
 # -----------------------
-
 async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("💸 Enter the amount you want to withdraw (numbers only). Send /cancel to abort.")
     return WITHDRAW_AMOUNT
@@ -739,6 +755,7 @@ async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT
     context.user_data['withdraw_network'] = wallet_network
     amount = context.user_data.get('withdraw_amount')
     if amount:
+        # Move funds: deduct from available, add to in_process
         async with async_session() as session:
             user = await get_user(session, user_id)
             balance = float(user.get('balance') or 0)
@@ -817,9 +834,8 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
     return ConversationHandler.END
 
 # -----------------------
-# ADMIN flows (approve/reject)
+# ADMIN flows (approve/reject for invest and withdraw)
 # -----------------------
-
 def _is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID and ADMIN_ID != 0
 
@@ -904,6 +920,7 @@ async def admin_confirm_callback(update: Update, context: ContextTypes.DEFAULT_T
                 await post_admin_log(context.application.bot, f"Admin approved WITHDRAW #{tx_db_id} ref {tx.ref}")
 
         else:
+            # reject
             if tx.type == 'invest':
                 await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='rejected'))
                 await session.commit()
@@ -930,60 +947,9 @@ async def admin_confirm_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     return
 
-async def admin_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await query.message.reply_text("Action cancelled.")
-
 # -----------------------
-# Language settings handlers
+# Admin pending command and History handlers
 # -----------------------
-
-def build_language_kb(current_lang: str) -> InlineKeyboardMarkup:
-    rows = []
-    rows.append([InlineKeyboardButton(TRANSLATIONS.get(current_lang, TRANSLATIONS[DEFAULT_LANG])["lang_auto"], callback_data="lang_auto")])
-    for code in SUPPORTED_LANGS:
-        label = TRANSLATIONS[DEFAULT_LANG].get(f"lang_{code}", LANG_DISPLAY.get(code, code))
-        rows.append([InlineKeyboardButton(label, callback_data=f"lang_{code}")])
-    rows.append([InlineKeyboardButton("◀ Back", callback_data="menu_settings")])
-    return InlineKeyboardMarkup(rows)
-
-async def settings_language_open_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    async with async_session() as session:
-        lang = await get_user_language(session, query.from_user.id, update=update)
-    await query.message.edit_text(t(lang, "settings_title") + "\n\n" + t(lang, "settings_language"), reply_markup=build_language_kb(lang))
-
-async def language_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    user_id = query.from_user.id
-    selected = None
-    if data == "lang_auto":
-        selected = "auto"
-    elif data.startswith("lang_"):
-        selected = data.split("_",1)[1]
-
-    async with async_session() as session:
-        result = await session.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-        if not user:
-            user = User(id=user_id, preferred_language=selected)
-            session.add(user)
-            await session.commit()
-        else:
-            await session.execute(sa_update(User).where(User.id == user_id).values(preferred_language=selected))
-            await session.commit()
-        effective_lang = await get_user_language(session, user_id, update=update)
-
-    await query.message.reply_text(t(effective_lang, "lang_set_success", lang=LANG_DISPLAY.get(effective_lang, effective_lang)))
-
-# -----------------------
-# Admin pending, history, other handlers (unchanged)
-# -----------------------
-
 async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ef_msg = update.effective_message
     user_id = update.effective_user.id
@@ -1008,7 +974,6 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
         except Exception:
             logger.exception("Failed to send pending tx %s to admin", tx.id)
 
-# HISTORY handlers...
 def history_list_item_text(tx: Transaction) -> str:
     created = tx.created_at.strftime("%Y-%m-%d") if tx.created_at else "-"
     ttype_raw = (tx.type or "").lower()
@@ -1172,9 +1137,8 @@ async def history_back_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await history_command(update, context)
 
 # -----------------------
-# Utilities: cancel, start, commands
+# Utilities: cancel, start, settings (wallet entry)
 # -----------------------
-
 async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE):
     if context and getattr(context, "user_data", None):
         context.user_data.clear()
@@ -1202,9 +1166,6 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.effective_message.reply_text("No withdrawal wallet saved. Set it with /wallet <address> [network]")
 
-async def history_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await history_command(update, context)
-
 async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
         lang = await get_user_language(session, update.effective_user.id, update=update)
@@ -1215,7 +1176,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(help_text)
 
 async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # This is the wallet entrypoint used by the ConversationHandler (and the settings menu)
+    # entry point for wallet setting via callback
     if update.callback_query:
         await update.callback_query.answer()
         await update.callback_query.message.reply_text("Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).")
@@ -1234,7 +1195,6 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------
 # MAIN wiring
 # -----------------------
-
 def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
@@ -1244,7 +1204,7 @@ def main():
             CommandHandler('withdraw', withdraw_cmd_handler),
             CallbackQueryHandler(invest_start_cmd, pattern='^menu_invest$'),
             CallbackQueryHandler(withdraw_start_cmd, pattern='^menu_withdraw$'),
-            CallbackQueryHandler(settings_start_wallet, pattern='^settings_set_wallet$'),
+            CallbackQueryHandler(settings_start_wallet, pattern='^settings_set_wallet$'),  # ensures wallet flow accessible
         ],
         states={
             INVEST_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, invest_amount_received)],
