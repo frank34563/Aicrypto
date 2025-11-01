@@ -1,8 +1,5 @@
-# Full final bot.py — updated so History shows compact list "DATE | AMOUNT | TYPE"
-# and opens a detailed view when the user taps an item.
-# This file is the same as your provided full bot.py with the HISTORY handlers replaced
-# to show Date | Amount | Type in the paginated list and show full details on selection.
-#
+# Full final bot.py — History buttons show only DATE | AMOUNT | TYPE and open detailed view on tap.
+# Replace your current bot.py with this file and restart.
 # Environment variables required:
 # - BOT_TOKEN (required)
 # - ADMIN_ID (required, numeric)
@@ -669,15 +666,12 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
             logger.exception("Failed to send pending tx %s to admin", tx.id)
 
 # -------------------------
-# NEW: HISTORY list format change and details view
-# Each history list line will now be: DATE  |  AMOUNT  |  TYPE
-# Tapping the Details button opens a detailed view with full info and proof/thumbnail.
+# HISTORY: buttons show only DATE | AMOUNT | TYPE (one button per tx)
 # -------------------------
 
 def history_list_item_text(tx: Transaction) -> str:
     """Return compact single-line text for a history list item: DATE | AMOUNT | TYPE"""
     created = tx.created_at.strftime("%Y-%m-%d") if tx.created_at else "-"
-    # Normalize type to DEPOSIT/INVEST or WITHDRAW
     ttype_raw = (tx.type or "").lower()
     if ttype_raw.startswith("with"):
         ttype = "WITHDRAW"
@@ -689,17 +683,12 @@ def history_list_item_text(tx: Transaction) -> str:
     return f"{created}  |  {amount}  |  {ttype}"
 
 async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Show a paginated list of the calling user's transactions with each line:
-      DATE  |  AMOUNT  |  TYPE
-    Each item has a 'Details' inline button which opens the detailed view for that transaction.
-    """
     ef_msg = update.effective_message
     user_id = update.effective_user.id
     args = context.args if hasattr(context, "args") else []
     is_admin = _is_admin(user_id)
 
-    # Admin "all" behavior remains unchanged
+    # admin 'all' behavior unchanged
     if args and args[0].lower() == "all":
         if not is_admin:
             await ef_msg.reply_text("Forbidden: admin only.")
@@ -719,7 +708,7 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await ef_msg.reply_text("\n".join(lines[i:i+50]))
         return
 
-    # Default: user's own history (paginated)
+    # Default: user's transactions (paginated)
     page = 1
     if args and args[0].isdigit():
         page = max(1, int(args[0]))
@@ -736,13 +725,13 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start = (page-1)*per_page
     page_items = txs[start:start+per_page]
 
-    # Build message lines + buttons
-    lines = []
+    # Build only buttons (each button label = "DATE | AMOUNT | TYPE")
     kb_rows = []
     for tx in page_items:
-        lines.append(history_list_item_text(tx))
-        kb_rows.append([InlineKeyboardButton(f"Details · {tx.ref}", callback_data=f"history_details_{tx.id}")])
+        btn_label = history_list_item_text(tx)
+        kb_rows.append([InlineKeyboardButton(btn_label, callback_data=f"history_details_{tx.id}")])
 
+    # Prev/Next navigation row
     nav = []
     if page > 1:
         nav.append(InlineKeyboardButton("⬅ Prev", callback_data=f"history_page_{page-1}_{user_id}"))
@@ -752,19 +741,19 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb_rows.append(nav)
 
     header = f"🧾 Transactions (page {page}/{total_pages}) — Tap an item for details\n\n"
-    await ef_msg.reply_text(header + "\n".join(lines), reply_markup=InlineKeyboardMarkup(kb_rows))
+    # send header + keyboard only (no long textual list), as requested
+    await ef_msg.reply_text(header, reply_markup=InlineKeyboardMarkup(kb_rows))
 
 async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data  # pattern: history_page_{page}_{user_id}
+    data = query.data
     parts = data.split("_")
     if len(parts) < 4:
         await query.message.reply_text("Invalid pagination data.")
         return
     page = int(parts[2])
     uid = int(parts[3])
-    # authorization: only the owner or admin can navigate the owner's pages
     if update.effective_user.id != uid and not _is_admin(update.effective_user.id):
         await query.message.reply_text("Forbidden: cannot view other user's history.")
         return
@@ -774,7 +763,7 @@ async def history_page_callback(update: Update, context: ContextTypes.DEFAULT_TY
 async def history_details_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data = query.data  # pattern: history_details_{tx_db_id}
+    data = query.data
     parts = data.split("_")
     if len(parts) < 3:
         await query.message.reply_text("Invalid details callback.")
@@ -808,13 +797,12 @@ async def history_details_callback(update: Update, context: ContextTypes.DEFAULT
     )
 
     # If proof is a photo file id (stored as 'photo:<file_id>') show as photo with caption
-    if proof.startswith("photo:"):
+    if proof and proof.startswith("photo:"):
         file_id = proof.split(":", 1)[1]
         try:
-            await context.application.bot.send_photo(chat_id=query.from_user.id, photo=file_id, caption=detail_text, parse_mode="HTML", reply_markup=(admin_action_kb(tx.id) if _is_admin(query.from_user.id) else None))
+            await context.application.bot.send_photo(chat_id=query.from_user.id, photo=file_id, caption=detail_text, parse_mode="HTML", reply_markup=(admin_action_kb(tx.id) if _is_admin(query.from_user.id) and tx.status == 'pending' else None))
             return
         except Exception:
-            # fallback to text
             pass
 
     if proof and proof != "-":
