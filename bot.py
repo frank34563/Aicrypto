@@ -1,17 +1,14 @@
-# Full final bot.py — Complete bot with compact main menu matching the Information bubble width.
-# - Inline main menu (no reply keyboard) with compact two-column UI
-# - Referral "Copy Link" button uses switch_inline_query_current_chat and leaves link message in chat
-# - History: buttons show DATE | AMOUNT | TYPE, with Prev/Next/Exit, and details include Back/Exit
-# - Invest and Withdraw request messages (pending) formatted like samples
-# - Admin approvals send Deposit Receipt and Withdrawal Receipt formatted like samples
+# Full final bot.py — Compact main menu (MENU_TLEN configurable)
+# - Inline main menu (compact two-column UI matching Information bubble)
+# - MENU_TLEN environment variable controls button width (e.g., 9 narrow, 10 default, 14 wide)
+# - Referral "Copy Link" uses switch_inline_query_current_chat
+# - History uses DATE | AMOUNT | TYPE buttons; details have Back/Exit
+# - Invest/Withdraw flows and admin receipts included
 #
-# Environment variables required:
-# - BOT_TOKEN (required)
-# - ADMIN_ID (required, numeric)
-# - MASTER_WALLET (recommended)
-# - MASTER_NETWORK (recommended)
-# - DATABASE_URL (optional; if not set, sqlite will be used)
-# - ADMIN_LOG_CHAT_ID (optional) — chat id for admin audit logs
+# Required env vars:
+# BOT_TOKEN, ADMIN_ID
+# Optional env vars:
+# MASTER_WALLET, MASTER_NETWORK, SUPPORT_USER, SUPPORT_URL, DATABASE_URL, ADMIN_LOG_CHAT_ID, MENU_TLEN
 
 import os
 import logging
@@ -58,8 +55,16 @@ MASTER_NETWORK = os.getenv('MASTER_NETWORK', 'TRC20')
 SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
 SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else "https://t.me/")
 
-# Keep the option to toggle two-column/full UI; default true
+# Toggle compact two-column menu; keep default true
 MENU_FULL_TWO_COLUMN = os.getenv('MENU_FULL_TWO_COLUMN', 'true').lower() in ('1','true','yes','on')
+
+# MENU_TLEN controls approximate visible width per button label.
+# Set MENU_TLEN=9 for narrower, MENU_TLEN=10 default, MENU_TLEN=14 for wider.
+try:
+    MENU_TLEN = int(os.getenv("MENU_TLEN", "10"))
+except Exception:
+    MENU_TLEN = 10
+
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 logging.basicConfig(level=logging.INFO)
@@ -198,15 +203,15 @@ async def log_transaction(session: AsyncSession, **data):
 INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, WITHDRAW_CONFIRM, HISTORY_PAGE, HISTORY_DETAILS = range(8)
 
 # -----------------------
-# UI helpers and validation (compact menu)
+# UI helpers and validation (compact)
 # -----------------------
 
 ZWSP = "\u200b"
 
-def _compact_pad(label: str, target: int = 10) -> str:
+def _compact_pad(label: str, target: int = MENU_TLEN) -> str:
     """
-    Minimal padding for compact buttons. target controls the approximate visible width.
-    Use a small target (8-12) to match information-bubble width on most clients.
+    Minimal padding for compact buttons. `target` controls the approximate visible width.
+    MENU_TLEN environment variable sets target (e.g., 9 narrow, 10 default, 14 wide).
     """
     plain = label.replace(ZWSP, "")
     if len(plain) >= target:
@@ -218,8 +223,8 @@ def _compact_pad(label: str, target: int = 10) -> str:
 
 def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN) -> InlineKeyboardMarkup:
     """
-    Compact two-column inline keyboard tuned to match the Information bubble width.
-    If MENU_FULL_TWO_COLUMN is False, falls back to the simple two-column keyboard.
+    Compact two-column inline keyboard tuned to match the information bubble width (image-5).
+    Uses MENU_TLEN to control per-button padding.
     """
     if not full_two_column:
         rows = []
@@ -234,8 +239,7 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN) -> In
         rows.append([InlineKeyboardButton("⨉ Exit", callback_data="menu_exit")])
         return InlineKeyboardMarkup(rows)
 
-    # Tweak this number if you need slightly wider or narrower buttons on your device
-    tlen = 10
+    tlen = MENU_TLEN
 
     left_right = [
         ("💰 Balance", "menu_balance", "📈 Invest", "menu_invest"),
@@ -255,10 +259,8 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN) -> In
             right_btn = InlineKeyboardButton(r, callback_data=r_cb)
         rows.append([left_btn, right_btn])
 
-    # Single compact Exit row
     exit_label = _compact_pad("⨉ Exit", target=(tlen*2)//2)
     rows.append([InlineKeyboardButton(exit_label, callback_data="menu_exit")])
-
     return InlineKeyboardMarkup(rows)
 
 def is_probable_wallet(address: str) -> bool:
