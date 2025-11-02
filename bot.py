@@ -1,16 +1,11 @@
-# Full bot.py — patched runtime fixes applied:
-# - Moved the generic menu CallbackQueryHandler registration so specific admin/history callbacks
-#   are registered before it (prevents the generic handler from swallowing admin callbacks).
-# - Schedules trading_job directly with AsyncIOScheduler.add_job(trading_job, ...)
-# - trading_job returns early when TRADING_ENABLED is False and logs start/skip
-# - Admin callbacks include permission checks and additional logging (admin_start_action_callback, admin_confirm_callback)
-# - Logs ADMIN_ID at startup and warns if not configured
-#
-# This file otherwise keeps the previously implemented features:
-# - Balance callback handling fix (edits message when called from CallbackQuery)
-# - Settings menu additions (language & wallet buttons)
-# - Admin notifications include Telegram username
-# - AI trading simulation with simulated live prices and admin control commands
+# Full bot.py — final patched version with:
+# - menu-handler ordering fix (admin/specific callbacks registered before generic menu handler)
+# - trading_job scheduled directly and checks TRADING_ENABLED
+# - trading_job uses simulated live prices and updates user balances
+# - buy/sell rates formatted with fixed-point decimal (no scientific notation) using format_price (Option A)
+# - admin callbacks improved with logging and permission checks
+# - admin notifications include Telegram username
+# - start, invest, withdraw flows, history, settings, and other features preserved
 #
 # Replace your existing bot.py with this file and restart the bot.
 
@@ -23,6 +18,8 @@ import sys
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional, List
 from dotenv import load_dotenv
+
+from decimal import Decimal, ROUND_HALF_UP
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import (
@@ -417,6 +414,25 @@ async def post_admin_log(bot, message: str):
             logger.exception("Failed to post admin log")
 
 # -----------------------
+# Helper: format price (Option A - fixed decimals, no scientific notation)
+# -----------------------
+def format_price(value: float, decimals: int = 12) -> str:
+    """
+    Convert a float to a fixed-point decimal string with `decimals` fractional digits.
+    Ensures values like 3e-05 are shown as 0.000030000000 (no scientific notation).
+    """
+    try:
+        if value is None:
+            return "0"
+        d = Decimal(str(value))
+        q = Decimal('1').scaleb(-decimals)  # 10**-decimals
+        d = d.quantize(q, rounding=ROUND_HALF_UP)
+        return f"{d:.{decimals}f}"
+    except Exception:
+        # fallback: format with python float formatting forced to fixed decimals
+        return f"{value:.{decimals}f}"
+
+# -----------------------
 # DAILY PROFIT JOB (unchanged)
 # -----------------------
 async def daily_profit_job():
@@ -491,8 +507,13 @@ async def trading_job():
                 async with _price_lock:
                     live_price = simulate_price_walk(pair)
                 spread = random.uniform(0.001, 0.006)
-                buy_rate = round(live_price * (1.0 - spread/2), 6)
-                sell_rate = round(live_price * (1.0 + spread/2 + random.uniform(0.0001, 0.0009)), 6)
+                # produce raw float rates
+                buy_rate_raw = live_price * (1.0 - spread/2)
+                sell_rate_raw = live_price * (1.0 + spread/2 + random.uniform(0.0001, 0.0009))
+                # format rates as plain decimals (no scientific notation), fixed decimals
+                buy_rate = format_price(buy_rate_raw, decimals=12)
+                sell_rate = format_price(sell_rate_raw, decimals=12)
+                # expected daily slice
                 runs_per_day = max(1.0, (24*60) / TRADING_FREQ_MINUTES)
                 daily_rate = 0.015
                 base = bal * daily_rate / runs_per_day
