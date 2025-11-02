@@ -456,14 +456,26 @@ async def daily_profit_job():
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query:
-        await query.answer()
-    data = query.data if query else None
-    if not data:
+    if not query:
         return
-    # allow ConversationHandler to handle invest/withdraw entrypoints and admin_* callbacks
-    if data in ("menu_invest", "menu_withdraw") or data.startswith("admin_"):
+    await query.answer()
+    data = query.data or ""
+
+    # Short-circuit: forward language callbacks to language handler (so dedicated handler can run)
+    if data == "lang_auto" or data.startswith("lang_"):
+        # delegate to the language handler so it handles persistence and confirmation
+        # language_callback_handler expects the same update/context, so we call it directly
+        await language_callback_handler(update, context)
         return
+
+    # Forward settings_set_wallet callback to the wallet-setting handler (conversation entry)
+    if data == "settings_set_wallet":
+        # settings_start_wallet expects to be called in the same shape as a CallbackQueryHandler entry.
+        # It returns a ConversationHandler state; call it and return.
+        await settings_start_wallet(update, context)
+        return
+
+    # Handle menu actions
     if data == "menu_exit":
         await cancel_conv(update, context)
         try:
@@ -475,16 +487,20 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # fallback: send a plain menu message
             await query.message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
         return
+
     if data == "menu_balance":
         async with async_session() as session:
             await send_balance_message(query, session, query.from_user.id)
-    elif data == "menu_history":
+        return
+
+    if data == "menu_history":
         await history_command(update, context)
-    elif data == "menu_referrals":
+        return
+
+    if data == "menu_referrals":
         user_id = query.from_user.id
         bot_username = (await context.bot.get_me()).username
         referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
-        # localized caption
         async with async_session() as session:
             lang = await get_user_language(session, user_id, update=update)
         text = (f"👥 {t(lang,'settings_title')}\n\nShare this link to invite friends and earn rewards:\n\n"
@@ -497,27 +513,35 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
         except Exception:
             await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
-    elif data == "menu_settings":
+        return
+
+    if data == "menu_settings":
         # open settings menu (localized) — now includes language and wallet buttons
         async with async_session() as session:
             lang = await get_user_language(session, query.from_user.id, update=update)
-        # Settings will include a button to change language and to set/update the withdrawal wallet
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(t(lang,"settings_language"), callback_data="settings_language")],
             [InlineKeyboardButton(t(lang,"settings_wallet"), callback_data="settings_set_wallet")],
             [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]
         ])
         await query.edit_message_text(t(lang, "settings_title"), reply_markup=kb)
-    elif data == "menu_info":
+        return
+
+    if data == "settings_language":
+        # open language selector
+        await settings_language_open_callback(update, context)
+        return
+
+    if data == "menu_info":
         async with async_session() as session:
             lang = await get_user_language(session, query.from_user.id, update=update)
         info_text = t(lang, "info_text")
         await query.edit_message_text(info_text, reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
-    elif data == "settings_language":
-        # open language selector
-        await settings_language_open_callback(update, context)
-    else:
         return
+
+    # If we get here the callback isn't one of the above handled menu events.
+    # Do nothing (avoids swallowing callbacks that other handlers might expect).
+    return
 
 # Balance helper
 async def send_balance_message(query_or_message, session: AsyncSession, user_id: int):
