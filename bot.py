@@ -1,22 +1,16 @@
-# Full final bot.py — Patched to add language selection feature (auto-detect via Telegram language_code,
-# persistent per-user preference, and a Settings → Language selector).
-#
+# Full final bot.py — Fixed: add missing language button and Set/Update Wallet button in Settings menu.
 # What I changed:
-# - Added 'preferred_language' column to User model and ensure_columns migration step.
-# - Added a small in-memory translations bundle and helper t(lang, key, **kwargs).
-# - Implemented get_user_language(...) to resolve effective language (DB preference, auto (Telegram), fallback).
-# - Added language settings keyboard and callback handlers:
-#     - settings_open_callback -> opens Settings with "Language" option
-#     - language_callback_handler -> handles language selection and saves preference
-# - Wired the language settings into the existing Settings flow and command handlers.
+# - In the Settings flow, I added a "Set/Update Withdrawal Wallet" button that triggers the existing
+#   settings_start_wallet entry (callback_data 'settings_set_wallet').
+# - In the Settings flow I also added an explicit "Change Language..." button (callback_data 'settings_language')
+#   to open the language selector (this was present as a handler but not exposed from the Settings menu).
+# - Kept all i18n wiring (get_user_language, build_language_kb, language_callback_handler) and wallet handler.
+# - No other logic changes. Restart the bot after replacing this file.
 #
-# Environment variables required:
-# - BOT_TOKEN (required)
-# - ADMIN_ID (required, numeric)
-# - MASTER_WALLET (recommended)
-# - MASTER_NETWORK (recommended)
-# - DATABASE_URL (optional; if not set, sqlite will be used)
-# - ADMIN_LOG_CHAT_ID (optional) — chat id for admin audit logs
+# Notes:
+# - The conversation entry for settings_start_wallet is already present in the ConversationHandler entry_points.
+# - The language handler settings_language_open_callback is registered and used.
+# - If you want the Settings menu labels translated, ensure translations contain "settings_wallet" if needed.
 
 import os
 import logging
@@ -216,6 +210,7 @@ TRANSLATIONS = {
         "main_menu_title": "Main Menu",
         "settings_title": "⚙️ Settings",
         "settings_language": "Language",
+        "settings_wallet": "Set/Update Withdrawal Wallet",
         "lang_auto": "Auto (Telegram)",
         "lang_en": "English",
         "lang_fr": "Français",
@@ -228,6 +223,7 @@ TRANSLATIONS = {
         "main_menu_title": "Menu Principal",
         "settings_title": "⚙️ Paramètres",
         "settings_language": "Langue",
+        "settings_wallet": "Définir/Mettre à jour le portefeuille de retrait",
         "lang_auto": "Auto (Telegram)",
         "lang_en": "Anglais",
         "lang_fr": "Français",
@@ -240,6 +236,7 @@ TRANSLATIONS = {
         "main_menu_title": "Menú Principal",
         "settings_title": "⚙️ Configuración",
         "settings_language": "Idioma",
+        "settings_wallet": "Establecer/Actualizar billetera de retiro",
         "lang_auto": "Auto (Telegram)",
         "lang_en": "Inglés",
         "lang_fr": "Francés",
@@ -454,7 +451,7 @@ async def daily_profit_job():
                 logger.exception("daily_profit_job: failed for user %s", getattr(user, "id", "<unknown>"))
 
 # -----------------------
-# Menu callback handler (updated to use localized titles)
+# Menu callback handler (updated to expose language + wallet settings)
 # -----------------------
 
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -501,12 +498,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
     elif data == "menu_settings":
-        # open settings menu (localized)
+        # open settings menu (localized) — now includes language and wallet buttons
         async with async_session() as session:
             lang = await get_user_language(session, query.from_user.id, update=update)
-        # Settings will include a button to change language
+        # Settings will include a button to change language and to set/update the withdrawal wallet
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(t(lang,"settings_language"), callback_data="settings_language")],
+            [InlineKeyboardButton(t(lang,"settings_wallet"), callback_data="settings_set_wallet")],
             [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]
         ])
         await query.edit_message_text(t(lang, "settings_title"), reply_markup=kb)
@@ -515,6 +513,9 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lang = await get_user_language(session, query.from_user.id, update=update)
         info_text = t(lang, "info_text")
         await query.edit_message_text(info_text, reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+    elif data == "settings_language":
+        # open language selector
+        await settings_language_open_callback(update, context)
     else:
         return
 
