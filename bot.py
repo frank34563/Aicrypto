@@ -1,9 +1,10 @@
 # Full bot.py — patched runtime fixes applied:
+# - Moved the generic menu CallbackQueryHandler registration so specific admin/history callbacks
+#   are registered before it (prevents the generic handler from swallowing admin callbacks).
 # - Schedules trading_job directly with AsyncIOScheduler.add_job(trading_job, ...)
-# - trading_job now returns early when TRADING_ENABLED is False and logs start/skip
+# - trading_job returns early when TRADING_ENABLED is False and logs start/skip
 # - Admin callbacks include permission checks and additional logging (admin_start_action_callback, admin_confirm_callback)
 # - Logs ADMIN_ID at startup and warns if not configured
-# - Uses history_command in handler registration (fix applied earlier)
 #
 # This file otherwise keeps the previously implemented features:
 # - Balance callback handling fix (edits message when called from CallbackQuery)
@@ -1453,19 +1454,23 @@ def main():
 
     application.add_handler(conv_handler)
 
-    # core handlers
-    application.add_handler(CallbackQueryHandler(menu_callback))
+    # language & settings handlers
     application.add_handler(CallbackQueryHandler(settings_language_open_callback, pattern='^settings_language$'))
     application.add_handler(CallbackQueryHandler(language_callback_handler, pattern='^lang_'))
     application.add_handler(CallbackQueryHandler(language_callback_handler, pattern='^lang_auto$'))
 
+    # admin handlers (must be registered before generic menu handler so patterns match)
     application.add_handler(CallbackQueryHandler(admin_start_action_callback, pattern='^admin_start_(approve|reject)_\\d+$'))
     application.add_handler(CallbackQueryHandler(admin_confirm_callback, pattern='^admin_confirm_(approve|reject)_\\d+$'))
     application.add_handler(CallbackQueryHandler(admin_cancel_callback, pattern='^admin_cancel_\\d+$'))
 
+    # history callbacks
     application.add_handler(CallbackQueryHandler(history_page_callback, pattern='^history_page_\\d+_\\d+$'))
     application.add_handler(CallbackQueryHandler(history_details_callback, pattern='^history_details_\\d+_\\d+_\\d+$'))
     application.add_handler(CallbackQueryHandler(history_back_callback, pattern='^history_back_\\d+_\\d+$'))
+
+    # generic menu handler should come after specific handlers
+    application.add_handler(CallbackQueryHandler(menu_callback))
 
     # commands
     application.add_handler(CommandHandler("start", start_handler))
