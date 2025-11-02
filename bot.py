@@ -9,10 +9,19 @@
 # - Trading simulation: random asset pairs, simulated live-like prices, buy/sell rates,
 #   variable profit amounts credited gradually to users, admin control commands.
 #
-# Notes:
-# - This file is a complete version assembled from the repository content plus the requested features.
-# - Requirements: python-telegram-bot v20+, SQLAlchemy (async), aiosqlite (if using default sqlite), APScheduler.
-# - Set environment variables: BOT_TOKEN (required). Optional: ADMIN_ID, ADMIN_LOG_CHAT_ID, MASTER_WALLET, MASTER_NETWORK, SUPPORT_USER.
+# This version fixes the NameError by ensuring balance_command is defined before main(),
+# and otherwise provides a complete, self-contained implementation.
+#
+# Requirements:
+# - python-telegram-bot v20+
+# - SQLAlchemy (async) + aiosqlite (for default sqlite)
+# - APScheduler
+#
+# Environment variables:
+# - BOT_TOKEN (required)
+# - ADMIN_ID (optional numeric)
+# - ADMIN_LOG_CHAT_ID (optional)
+# - MASTER_WALLET, MASTER_NETWORK, SUPPORT_USER (optional)
 #
 # Replace your existing bot.py with this file and restart the bot.
 
@@ -92,11 +101,11 @@ class Transaction(Base):
     __tablename__ = 'transactions'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger)
-    ref = Column(String)
-    type = Column(String)
+    ref = Column(String)            # random 5-digit reference
+    type = Column(String)           # 'invest' or 'withdraw' or 'profit' or 'trade'
     amount = Column(Numeric(26, 8))
-    status = Column(String)
-    proof = Column(String)
+    status = Column(String)         # 'pending','credited','rejected','completed'
+    proof = Column(String)          # txid or file_id (format: 'photo:<file_id>' for photos)
     wallet = Column(String)
     network = Column(String)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -190,7 +199,7 @@ async def log_transaction(session: AsyncSession, **data):
 INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, WITHDRAW_CONFIRM, HISTORY_PAGE, HISTORY_DETAILS = range(8)
 
 # -----------------------
-# I18N bundle and helpers
+# I18N: translations and helpers
 # -----------------------
 TRANSLATIONS = {
     "en": {
@@ -208,36 +217,41 @@ TRANSLATIONS = {
     },
 }
 DEFAULT_LANG = "en"
-SUPPORTED_LANGS = ["en", "fr", "es"]
+SUPPORTED_LANGS = ["en","fr","es"]
 LANG_DISPLAY = {"en":"English","fr":"Français","es":"Español"}
 
 def t(lang: str, key: str, **kwargs) -> str:
     bundle = TRANSLATIONS.get(lang, TRANSLATIONS[DEFAULT_LANG])
     txt = bundle.get(key, TRANSLATIONS[DEFAULT_LANG].get(key, key))
-    return txt.format(**kwargs) if kwargs else txt
+    if kwargs:
+        return txt.format(**kwargs)
+    return txt
 
 async def get_user_language(session: AsyncSession, user_id: int, update: Optional[Update] = None) -> str:
     result = await session.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    preferred = getattr(user, "preferred_language", None) if user else None
-
-    if preferred and preferred != "auto" and preferred in SUPPORTED_LANGS:
-        return preferred
-
+    preferred = None
+    if user:
+        preferred = getattr(user, "preferred_language", None)
+    if preferred and preferred != "auto":
+        if preferred in SUPPORTED_LANGS:
+            return preferred
     if update and getattr(update, "effective_user", None):
-        tlang = (update.effective_user.language_code or "").split("-")[0].lower()
+        tlang = (update.effective_user.language_code or "").lower()
+        if "-" in tlang:
+            tlang = tlang.split("-")[0]
         if tlang in SUPPORTED_LANGS:
             return tlang
-
     if preferred == "auto" and update and getattr(update, "effective_user", None):
-        tlang = (update.effective_user.language_code or "").split("-")[0].lower()
+        tlang = (update.effective_user.language_code or "").lower()
+        if "-" in tlang:
+            tlang = tlang.split("-")[0]
         if tlang in SUPPORTED_LANGS:
             return tlang
-
     return DEFAULT_LANG
 
 # -----------------------
-# UI helpers and validation
+# UI helpers and menu keyboard
 # -----------------------
 ZWSP = "\u200b"
 
@@ -280,6 +294,7 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang:
         (labels["referrals"], "menu_referrals", labels["settings"], "menu_settings"),
         (labels["information"], "menu_info", labels["help"], "menu_help_url"),
     ]
+
     rows = []
     for l_label, l_cb, r_label, r_cb in left_right:
         l = _compact_pad(l_label, target=tlen)
@@ -290,6 +305,7 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang:
         else:
             right_btn = InlineKeyboardButton(r, callback_data=r_cb)
         rows.append([left_btn, right_btn])
+
     exit_label = _compact_pad(labels["exit"], target=(tlen*2)//2)
     rows.append([InlineKeyboardButton(exit_label, callback_data="menu_exit")])
     return InlineKeyboardMarkup(rows)
@@ -309,7 +325,7 @@ def is_probable_wallet(address: str) -> bool:
     return False
 
 # -----------------------
-# Admin helpers and notifications
+# Admin & notification helpers (include username when available)
 # -----------------------
 def tx_card_text(tx: Transaction, username: Optional[str] = None) -> str:
     emoji = "📥" if (tx.type == 'invest') else ("💸" if tx.type == 'withdraw' else ("🤖" if tx.type == 'trade' else "💰"))
@@ -351,7 +367,7 @@ async def post_admin_log(bot, message: str):
             logger.exception("Failed to post admin log")
 
 # -----------------------
-# Daily profit job
+# DAILY PROFIT JOB
 # -----------------------
 async def daily_profit_job():
     PROFIT_RATE = 0.015
@@ -380,6 +396,7 @@ TRADING_PAIRS = [
     ("USDT","BTC"), ("USDT","ETH"), ("USDT","ADA"), ("USDT","BNB"),
     ("BTC","ETH"), ("ETH","BTC"), ("USDT","SOL"), ("USDT","XRP")
 ]
+
 PRICE_BASE = {
     "BTC": 60000.0,
     "ETH": 3500.0,
@@ -462,7 +479,7 @@ async def trading_round(triggered_by_admin: bool=False):
             except Exception:
                 logger.exception("trading_round error for user %s", getattr(user, "id", "<unknown>"))
 
-# Admin trading commands
+# Admin trading controls
 async def enable_trading_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(update.effective_user.id):
         await update.effective_message.reply_text("Forbidden: admin only."); return
@@ -567,8 +584,16 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
         logger.exception("Failed to send balance message for user %s", user_id)
 
 # -----------------------
-# Invest flow
+# INVEST / WITHDRAW / ADMIN / HISTORY / LANGUAGE flows
 # -----------------------
+# (All handlers implemented above; keep conversation handlers and helper functions.)
+
+# Define balance_command early so main() can add the handler without NameError
+async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with async_session() as session:
+        await send_balance_message(update.effective_message, session, update.effective_user.id)
+
+# INVEST flow
 async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.", reply_markup=None)
     return INVEST_AMOUNT
@@ -690,9 +715,7 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     context.user_data.pop('invest_proof', None)
     return ConversationHandler.END
 
-# -----------------------
 # Withdraw flow
-# -----------------------
 async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("💸 Enter the amount you want to withdraw (numbers only). Send /cancel to abort.")
     return WITHDRAW_AMOUNT
@@ -850,7 +873,7 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
     return ConversationHandler.END
 
 # -----------------------
-# Admin approve/reject
+# Admin approve/reject flows
 # -----------------------
 def _is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID and ADMIN_ID != 0
@@ -969,7 +992,7 @@ async def admin_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await query.message.reply_text("Action cancelled.")
 
 # -----------------------
-# History and language handlers
+# History & language handlers (already implemented above)
 # -----------------------
 def history_list_item_text(tx: Transaction) -> str:
     created = tx.created_at.strftime("%Y-%m-%d") if tx.created_at else "-"
@@ -1181,7 +1204,7 @@ async def language_callback_handler(update: Update, context: ContextTypes.DEFAUL
     await query.message.reply_text(t(effective_lang, "lang_set_success", lang=LANG_DISPLAY.get(effective_lang, effective_lang)))
 
 # -----------------------
-# Utilities: cancel, wallet, start
+# Utilities: cancel, wallet command, start
 # -----------------------
 async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE):
     if context and getattr(context, "user_data", None):
@@ -1294,7 +1317,7 @@ def main():
     application.add_handler(CommandHandler("disable_trading", disable_trading_command))
     application.add_handler(CommandHandler("trade_now", trade_now_command))
 
-    application.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
+    application.add_handler(MessageHandler(filters.Regex("^Balance$"), lambda u,c: asyncio.create_task(send_balance_message(u.effective_message, async_session(), u.effective_user.id))))
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
