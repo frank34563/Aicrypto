@@ -1,13 +1,18 @@
-# Full bot.py — combined and complete file
-# - All previous functionality preserved (invest/withdraw/history/settings/admin flows, daily profit job)
-# - AI trading simulation retained
-# - Binance live-price integration added and enabled by default with cache & admin controls
-# - Buy/sell rates formatted with fixed-point decimals (no scientific notation)
-# - Admin "Commands" button added to admin notification keyboards and /admin_cmds command
-# - Generic menu CallbackQueryHandler registered after admin-specific handlers so admin callbacks are not swallowed
+# Full bot.py — Combined final version with Binance live-price integration and full handlers merged.
+# - Real Binance price fetching (async via aiohttp), with TTL cache and admin controls (/use_binance_on, /use_binance_off, /binance_status)
+# - Trading simulation uses Binance prices when enabled, falls back to simulated prices on failure
+# - Rates formatted with fixed-point decimals (no scientific notation) using format_price (Option A)
+# - Admin action keyboards include "🛠️ Commands" button and /admin_cmds command is available
+# - Admin callbacks registered before generic menu handler (so they are not swallowed)
+# - All main handlers (start, invest, withdraw, wallet, history, admin approve/reject, trading job, DB init) included
 #
-# Requirements: python-telegram-bot v20+, SQLAlchemy, aiosqlite, APScheduler, aiohttp, python-dotenv
-# Environment variables: BOT_TOKEN (required), ADMIN_ID (numeric), ADMIN_LOG_CHAT_ID (optional), DATABASE_URL (optional)
+# Requirements: python-telegram-bot v20+, aiohttp, APScheduler, SQLAlchemy, aiosqlite, python-dotenv
+# Environment variables:
+# - BOT_TOKEN (required)
+# - ADMIN_ID (required numeric)
+# - ADMIN_LOG_CHAT_ID (optional)
+# - DATABASE_URL (optional)
+# - BINANCE_CACHE_TTL (optional, seconds)
 #
 # Replace your existing bot.py with this file and restart.
 
@@ -22,6 +27,7 @@ from typing import Dict, Optional, List
 from dotenv import load_dotenv
 
 from decimal import Decimal, ROUND_HALF_UP
+
 import aiohttp
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -59,7 +65,7 @@ try:
 except Exception:
     ADMIN_ID = 0
 
-ADMIN_LOG_CHAT_ID = os.getenv('ADMIN_LOG_CHAT_ID')  # optional
+ADMIN_LOG_CHAT_ID = os.getenv('ADMIN_LOG_CHAT_ID')
 MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbc...')
 MASTER_NETWORK = os.getenv('MASTER_NETWORK', 'TRC20')
 SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
@@ -111,10 +117,10 @@ class Transaction(Base):
     __tablename__ = 'transactions'
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger)
-    ref = Column(String)
-    type = Column(String)
+    ref = Column(String)            # random 5-digit reference
+    type = Column(String)           # 'invest' or 'withdraw' or 'profit' or 'trade'
     amount = Column(Numeric(28, 12))
-    status = Column(String)
+    status = Column(String)         # 'pending','credited','rejected','completed'
     proof = Column(String)
     wallet = Column(String)
     network = Column(String)
@@ -137,7 +143,7 @@ async def ensure_columns():
         except Exception:
             pass
 
-async def init_db(retries=5, backoff=2.0, fallback_to_sqlite=True):
+async def init_db(retries: int = 5, backoff: float = 2.0, fallback_to_sqlite: bool = True):
     global engine, async_session, DATABASE_URL
     last_exc = None
     attempt = 0
@@ -160,6 +166,7 @@ async def init_db(retries=5, backoff=2.0, fallback_to_sqlite=True):
     if fallback_to_sqlite:
         try:
             sqlite_url = "sqlite+aiosqlite:///bot_fallback.db"
+            logger.warning("Falling back to sqlite DB at %s", sqlite_url)
             from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine
             DATABASE_URL = sqlite_url
             engine = _create_async_engine(DATABASE_URL, echo=False, future=True)
@@ -173,6 +180,7 @@ async def init_db(retries=5, backoff=2.0, fallback_to_sqlite=True):
             return
         except Exception as e2:
             logger.exception("Fallback to sqlite failed: %s", e2)
+    logger.critical("Unable to initialize database and fallback failed — exiting.")
     raise SystemExit(1)
 
 # DB helpers
@@ -203,7 +211,7 @@ async def log_transaction(session: AsyncSession, **data):
 INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, WITHDRAW_CONFIRM, HISTORY_PAGE, HISTORY_DETAILS = range(8)
 
 # -----------------------
-# I18N & UI
+# I18N & UI helpers
 # -----------------------
 TRANSLATIONS = {
     "en": {
@@ -214,7 +222,7 @@ TRANSLATIONS = {
         "settings_wallet": "Set/Update Withdrawal Wallet",
         "lang_auto": "Auto (Telegram)",
         "lang_set_success": "Language updated to {lang}.",
-        "info_text": "ℹ️ Information\n\nWelcome to AiCrypto bot.",
+        "info_text": "ℹ️ Information\n\nWelcome to AiCrypto bot."
     }
 }
 DEFAULT_LANG = "en"
@@ -227,15 +235,24 @@ def t(lang: str, key: str, **kwargs) -> str:
 ZWSP = "\u200b"
 def _compact_pad(label: str, target: int = 10) -> str:
     plain = label.replace(ZWSP, "")
-    if len(plain) >= target: return label
+    if len(plain) >= target:
+        return label
     needed = target - len(plain)
-    left = needed//2; right = needed-left
-    return (" "*left) + label + (" "*right) + ZWSP
+    left = needed // 2
+    right = needed - left
+    return (" " * left) + label + (" " * right) + ZWSP
 
 def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang: str = DEFAULT_LANG) -> InlineKeyboardMarkup:
     labels = {
-        "balance":"💰 Balance","invest":"📈 Invest","history":"🧾 History","withdraw":"💸 Withdraw",
-        "referrals":"👥 Referrals","settings":"⚙️ Settings","information":"ℹ️ Information","help":"❓ Help","exit":"⨉ Exit"
+        "balance": "💰 Balance",
+        "invest": "📈 Invest",
+        "history": "🧾 History",
+        "withdraw": "💸 Withdraw",
+        "referrals":"👥 Referrals",
+        "settings":"⚙️ Settings",
+        "information":"ℹ️ Information",
+        "help":"❓ Help",
+        "exit":"⨉ Exit",
     }
     rows = [
         [InlineKeyboardButton(labels["balance"], callback_data="menu_balance"), InlineKeyboardButton(labels["invest"], callback_data="menu_invest")],
@@ -256,10 +273,10 @@ def is_probable_wallet(address: str) -> bool:
     return False
 
 # -----------------------
-# ADMIN / TX helpers
+# Admin / transaction helpers
 # -----------------------
 def tx_card_text(tx: Transaction, username: Optional[str] = None) -> str:
-    emoji = "📥" if tx.type == 'invest' else ("💸" if tx.type == 'withdraw' else ("🤖" if tx.type == 'trade' else "💰"))
+    emoji = "📥" if (tx.type == 'invest') else ("💸" if tx.type == 'withdraw' else ("🤖" if tx.type == 'trade' else "💰"))
     created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else "-"
     user_line = f"User: <code>{tx.user_id}</code>"
     if username:
@@ -303,7 +320,7 @@ async def post_admin_log(bot, message: str):
             logger.exception("Failed to post admin log")
 
 # -----------------------
-# PRICE FORMATTING
+# Formatting helper
 # -----------------------
 def format_price(value: float, decimals: int = 12) -> str:
     try:
@@ -317,10 +334,10 @@ def format_price(value: float, decimals: int = 12) -> str:
         return f"{value:.{decimals}f}"
 
 # -----------------------
-# BINANCE INTEGRATION
+# BINANCE Integration
 # -----------------------
 _binance_session: Optional[aiohttp.ClientSession] = None
-_binance_cache: Dict[str, Dict] = {}  # symbol -> {'price': float, 'ts': datetime}
+_binance_cache: Dict[str, Dict] = {}
 USE_BINANCE = USE_BINANCE_BY_DEFAULT
 
 async def _ensure_binance_session():
@@ -352,7 +369,7 @@ async def fetch_binance_price(symbol: str) -> Optional[float]:
         return None
 
 # -----------------------
-# SIMULATED PRICE FALLBACK (BASE/QUOTE pairs)
+# Simulated fallback prices
 # -----------------------
 SIM_PRICE_PAIRS = {
     "BTC/USDT": 35000.0,
@@ -374,36 +391,14 @@ def pick_random_pair() -> str:
     return random.choice(list(SIM_PRICE_PAIRS.keys()))
 
 # -----------------------
-# DAILY PROFIT JOB
-# -----------------------
-async def daily_profit_job():
-    PROFIT_RATE = 0.015
-    async with async_session() as session:
-        result = await session.execute(select(User))
-        users = result.scalars().all()
-        for user in users:
-            try:
-                total = float(user.balance or 0) + float(user.balance_in_process or 0)
-                if total <= 0:
-                    continue
-                profit = round(total * PROFIT_RATE, 2)
-                new_balance = float(user.balance or 0) + profit
-                new_total_profit = float(user.total_profit or 0) + profit
-                await update_user(session, user.id, balance=new_balance, daily_profit=profit, total_profit=new_total_profit)
-                await log_transaction(session, user_id=user.id, ref=None, type='profit', amount=profit, status='credited', proof='', wallet='', network='', created_at=datetime.utcnow())
-                logger.info("Credited daily profit %.2f to user %s", profit, user.id)
-            except Exception:
-                logger.exception("daily_profit_job: failed for user %s", getattr(user, "id", "<unknown>"))
-
-# -----------------------
-# TRADING SIMULATION (with Binance integration)
+# Trading job
 # -----------------------
 TRADING_ENABLED = True
 TRADING_FREQ_MINUTES = 10
 
 async def trading_job():
     if not TRADING_ENABLED:
-        logger.debug("trading_job: disabled")
+        logger.debug("trading_job: disabled, skipping")
         return
     now = datetime.utcnow()
     logger.info("trading_job: run at %s", now.isoformat())
@@ -417,13 +412,12 @@ async def trading_job():
                 bal = float(user.balance or 0.0)
                 if bal <= 1.0:
                     continue
-                # randomness to avoid notifying everyone
                 if random.random() < 0.6:
                     continue
                 pair = pick_random_pair()  # e.g., "BTC/USDT"
                 price = None
                 if USE_BINANCE:
-                    symbol = pair.replace("/", "")  # "BTCUSDT"
+                    symbol = pair.replace("/", "")
                     price = await fetch_binance_price(symbol)
                 if price is None:
                     async with _price_lock:
@@ -433,7 +427,7 @@ async def trading_job():
                 sell_rate_raw = price * (1.0 + spread/2 + random.uniform(0.0001, 0.0009))
                 buy_rate = format_price(buy_rate_raw, decimals=8)
                 sell_rate = format_price(sell_rate_raw, decimals=8)
-                runs_per_day = max(1.0, (24*60)/TRADING_FREQ_MINUTES)
+                runs_per_day = max(1.0, (24*60) / TRADING_FREQ_MINUTES)
                 daily_rate = 0.015
                 base_slice = bal * daily_rate / runs_per_day
                 profit = round(base_slice * random.uniform(0.2, 1.6), 6)
@@ -455,7 +449,7 @@ async def trading_job():
                     created_at=now
                 )
                 profit_percent = round((profit / bal) * 100, 6)
-                base_asset, quote_asset = pair.split("/")  # base=BTC, quote=USDT
+                base_asset, quote_asset = pair.split("/")  # BTC, USDT
                 trading_pair_str = f"{quote_asset} → {base_asset} → {quote_asset}"
                 display_balance = round(new_balance, 6)
                 date_str = now.strftime("%d.%m.%Y %H:%M")
@@ -473,94 +467,30 @@ async def trading_job():
                 except Exception:
                     logger.debug("Failed to send trade alert to user %s", user.id)
             except Exception:
-                logger.exception("trading_job: error for user %s", getattr(user, "id", "<unknown>"))
+                logger.exception("trading_job error for user %s", getattr(user, "id", "<unknown>"))
 
 # -----------------------
-# MENU & CALLBACKS
+# Handlers: start, balance, wallet, invest, withdraw, history, admin, etc.
 # -----------------------
-async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if not query:
-        return
-    await query.answer()
-    data = query.data or ""
+def _is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID and ADMIN_ID != 0
 
-    # admin commands callback
-    if data == "admin_commands":
-        uid = query.from_user.id
-        if not _is_admin(uid):
-            await query.message.reply_text("Forbidden: admin only.")
-            return
-        await query.message.reply_text(admin_commands_text())
-        return
+# start
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update=update)
+    WELCOME_TEXT = (
+        "Welcome to AiCrypto bot.\n"
+        "- Invest: deposit funds to provided wallet and upload proof (txid or screenshot).\n"
+        "- Withdraw: request withdrawals; admin will approve and process."
+    )
+    try:
+        await update.effective_message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+    except Exception:
+        await update.effective_message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
 
-    if data == "lang_auto" or data.startswith("lang_"):
-        await language_callback_handler(update, context)
-        return
-
-    if data == "settings_set_wallet":
-        await settings_start_wallet(update, context)
-        return
-
-    if data == "menu_exit":
-        await cancel_conv(update, context)
-        async with async_session() as session:
-            lang = await get_user_language(session, query.from_user.id, update=update)
-        WELCOME_TEXT = (
-            "Welcome to AiCrypto bot.\n"
-            "- Invest: deposit funds to provided wallet and upload proof (txid or screenshot).\n"
-            "- Withdraw: request withdrawals; admin will approve and process."
-        )
-        try:
-            await query.message.edit_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
-        except Exception:
-            await query.message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
-        return
-
-    if data == "menu_balance":
-        async with async_session() as session:
-            await send_balance_message(query, session, query.from_user.id)
-        return
-
-    if data == "menu_history":
-        await history_command(update, context)
-        return
-
-    if data == "menu_referrals":
-        user_id = query.from_user.id
-        bot_username = (await context.bot.get_me()).username
-        referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
-        async with async_session() as session:
-            lang = await get_user_language(session, user_id, update=update)
-        text = (f"👥 {t(lang,'settings_title')}\n\nShare this link:\n<code>{referral_link}</code>")
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Copy Link", switch_inline_query_current_chat=referral_link)], [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]])
-        await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
-        return
-
-    if data == "menu_settings":
-        async with async_session() as session:
-            lang = await get_user_language(session, query.from_user.id, update=update)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(t(lang,"change_language"), callback_data="settings_language")],
-            [InlineKeyboardButton(t(lang,"settings_wallet"), callback_data="settings_set_wallet")],
-            [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]
-        ])
-        await query.edit_message_text(t(lang, "settings_title"), reply_markup=kb)
-        return
-
-    if data == "settings_language":
-        await settings_language_open_callback(update, context)
-        return
-
-    if data == "menu_info":
-        async with async_session() as session:
-            lang = await get_user_language(session, query.from_user.id, update=update)
-        await query.edit_message_text(t(lang, "info_text"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
-        return
-
-# -----------------------
-# Balance helper
-# -----------------------
+# balance
 async def send_balance_message(query_or_message, session: AsyncSession, user_id: int):
     user = await get_user(session, user_id)
     lang = await get_user_language(session, user_id)
@@ -580,9 +510,32 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
     except Exception:
         logger.exception("Failed to send balance message for user %s", user_id)
 
-# -----------------------
-# INVEST flows
-# -----------------------
+async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with async_session() as session:
+        await send_balance_message(update.effective_message, session, update.effective_user.id)
+
+# wallet
+async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    args = context.args
+    if args:
+        wallet_address = args[0]
+        wallet_network = args[1] if len(args) > 1 else ''
+        async with async_session() as session:
+            await update_user(session, user_id, wallet_address=wallet_address, wallet_network=wallet_network)
+        await update.effective_message.reply_text(f"Wallet saved:\n<code>{wallet_address}</code>\nNetwork: {wallet_network}", parse_mode="HTML")
+    else:
+        async with async_session() as session:
+            user = await get_user(session, user_id)
+        wallet_address = user.get('wallet_address')
+        wallet_network = user.get('wallet_network')
+        if wallet_address:
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton("Use this wallet for next withdrawal", callback_data="withdraw_use_saved")]])
+            await update.effective_message.reply_text(f"Saved wallet:\n<code>{wallet_address}</code>\nNetwork: {wallet_network}", parse_mode="HTML", reply_markup=kb)
+        else:
+            await update.effective_message.reply_text("No withdrawal wallet saved. Set it with /wallet <address> [network]")
+
+# invest flow
 async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.", reply_markup=None)
     return INVEST_AMOUNT
@@ -707,9 +660,7 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     context.user_data.pop('invest_proof', None)
     return ConversationHandler.END
 
-# -----------------------
-# WITHDRAW flows
-# -----------------------
+# Withdraw flow
 async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text("💸 Enter the amount you want to withdraw (numbers only). Send /cancel to abort.")
     return WITHDRAW_AMOUNT
@@ -788,7 +739,7 @@ async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT
             user = await get_user(session, user_id)
             balance = float(user.get('balance') or 0)
             if amount > balance:
-                await msg.reply_text(f"Insufficient balance. Available: {balance:.2f}$.", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
+                await msg.reply_text(f"Insufficient balance. Available: {balance:.2f}$.", reply_markup=build_main_menu_keyboard())
                 context.user_data.pop('withdraw_amount', None)
                 return ConversationHandler.END
             new_balance = balance - amount
@@ -870,11 +821,8 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
     return ConversationHandler.END
 
 # -----------------------
-# ADMIN flows: approve/reject
+# Admin callbacks: approve/reject
 # -----------------------
-def _is_admin(user_id: int) -> bool:
-    return user_id == ADMIN_ID and ADMIN_ID != 0
-
 async def admin_start_action_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
@@ -886,7 +834,7 @@ async def admin_start_action_callback(update: Update, context: ContextTypes.DEFA
     data = query.data or ""
     parts = data.split("_")
     if len(parts) < 4:
-        await query.message.reply_text("Invalid admin action.")
+        await query.message.reply_text("Invalid admin action callback.")
         return
     action = parts[2]
     tx_db_id = int(parts[3])
@@ -927,6 +875,7 @@ async def admin_confirm_callback(update: Update, context: ContextTypes.DEFAULT_T
                     await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='credited'))
                     await session.commit()
                     receipt_text = (
+                        "  **Deposit Receipt **\n"
                         "✅ Your deposit has been approved and credited\n"
                         f"Transaction ID, D-{tx.ref}\n"
                         f"Amount, {float(tx.amount):.2f} USDT\n"
@@ -946,11 +895,12 @@ async def admin_confirm_callback(update: Update, context: ContextTypes.DEFAULT_T
                     await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='completed'))
                     await session.commit()
                     receipt_text = (
+                        "  **Withdrawal Receipt **\n"
                         "✅ Your withdrawal has been approved and processed\n"
                         f"Transaction ID, W-{tx.ref}\n"
                         f"Amount, {float(tx.amount):.2f} USDT\n"
                         f"Wallet: {tx.wallet}\n"
-                        f"Network: {tx.network}"
+                        f"Network: {tx.network}\n"
                     )
                     try:
                         await context.application.bot.send_message(chat_id=tx.user_id, text=receipt_text, parse_mode="HTML")
@@ -960,12 +910,11 @@ async def admin_confirm_callback(update: Update, context: ContextTypes.DEFAULT_T
                     await post_admin_log(context.application.bot, f"Admin approved WITHDRAW #{tx_db_id} ref {tx.ref}")
 
             else:
-                # reject
                 if tx.type == 'invest':
                     await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='rejected'))
                     await session.commit()
                     try:
-                        await context.application.bot.send_message(chat_id=tx.user_id, text=f"❌ Your deposit (ref D-{tx.ref}) was rejected.")
+                        await context.application.bot.send_message(chat_id=tx.user_id, text=f"❌ Your deposit (ref D-{tx.ref}) was rejected by admin.")
                     except Exception:
                         logger.exception("Notify user invest reject fail")
                     await query.message.reply_text(f"Invest #{tx_db_id} rejected.")
@@ -988,97 +937,15 @@ async def admin_confirm_callback(update: Update, context: ContextTypes.DEFAULT_T
     except Exception:
         logger.exception("Error handling admin confirmation for tx %s", tx_db_id)
 
-# Admin cancel handler
+    return
+
 async def admin_cancel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.message.reply_text("Action cancelled.")
 
 # -----------------------
-# Admin commands to control trading and Binance
-# -----------------------
-async def cmd_trade_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text("Forbidden: admin only.")
-        return
-    global TRADING_ENABLED
-    TRADING_ENABLED = True
-    await update.effective_message.reply_text("Trading simulation ENABLED.")
-    await post_admin_log(context.bot, "Admin enabled trading simulation.")
-
-async def cmd_trade_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text("Forbidden: admin only.")
-        return
-    global TRADING_ENABLED
-    TRADING_ENABLED = False
-    await update.effective_message.reply_text("Trading simulation DISABLED.")
-    await post_admin_log(context.bot, "Admin disabled trading simulation.")
-
-async def cmd_trade_freq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text("Forbidden: admin only.")
-        return
-    args = context.args
-    if not args or not args[0].isdigit():
-        await update.effective_message.reply_text("Usage: /trade_freq <minutes> (integer)")
-        return
-    minutes = max(1, int(args[0]))
-    global TRADING_FREQ_MINUTES
-    TRADING_FREQ_MINUTES = minutes
-    await update.effective_message.reply_text(f"Trading frequency set to {minutes} minutes. Will apply after restart or when triggered with /trade_now.")
-    await post_admin_log(context.bot, f"Admin set trading frequency to {minutes} minutes.")
-
-async def cmd_trade_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text("Forbidden: admin only.")
-        return
-    await update.effective_message.reply_text("Running trading job now...")
-    await trading_job()
-    await update.effective_message.reply_text("Trading run completed.")
-    await post_admin_log(context.bot, "Admin triggered immediate trading run.")
-
-async def cmd_trade_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text("Forbidden: admin only.")
-        return
-    await update.effective_message.reply_text(f"Trading: {'ENABLED' if TRADING_ENABLED else 'DISABLED'}\nFrequency: {TRADING_FREQ_MINUTES} minutes\nBinance: {'ENABLED' if USE_BINANCE else 'DISABLED'}")
-
-async def cmd_use_binance_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text("Forbidden: admin only.")
-        return
-    global USE_BINANCE
-    USE_BINANCE = True
-    await update.effective_message.reply_text("Binance price fetching ENABLED.")
-    await post_admin_log(context.bot, "Admin enabled Binance price fetching.")
-
-async def cmd_use_binance_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text("Forbidden: admin only.")
-        return
-    global USE_BINANCE
-    USE_BINANCE = False
-    await update.effective_message.reply_text("Binance price fetching DISABLED; using simulated prices.")
-    await post_admin_log(context.bot, "Admin disabled Binance price fetching.")
-
-async def cmd_binance_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text("Forbidden: admin only.")
-        return
-    cache_info = ", ".join(f"{s}:{d['price']}" for s,d in _binance_cache.items())
-    await update.effective_message.reply_text(f"Binance enabled: {USE_BINANCE}\nCache TTL: {BINANCE_CACHE_TTL}s\nCache: {cache_info or 'empty'}")
-
-# -----------------------
-# HISTORY handlers
+# History handlers
 # -----------------------
 def history_list_item_text(tx: Transaction) -> str:
     created = tx.created_at.strftime("%Y-%m-%d") if tx.created_at else "-"
@@ -1245,26 +1112,20 @@ async def history_back_callback(update: Update, context: ContextTypes.DEFAULT_TY
     await history_command(update, context)
 
 # -----------------------
-# LANGUAGE / SETTINGS / START / HELP / WALLET
+# Language & settings
 # -----------------------
 def build_language_kb(current_lang: str) -> InlineKeyboardMarkup:
-    rows = []
-    rows.append([InlineKeyboardButton(TRANSLATIONS.get(current_lang, TRANSLATIONS[DEFAULT_LANG])["lang_auto"], callback_data="lang_auto")])
+    rows = [[InlineKeyboardButton(TRANSLATIONS.get(current_lang, TRANSLATIONS[DEFAULT_LANG])["lang_auto"], callback_data="lang_auto")]]
     rows.append([InlineKeyboardButton("◀ Back", callback_data="menu_settings")])
     return InlineKeyboardMarkup(rows)
 
 async def settings_language_open_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query:
-        await query.answer()
-        async with async_session() as session:
-            lang = await get_user_language(session, query.from_user.id, update=update)
-        await query.message.edit_text(t(lang, "settings_title") + "\n\n" + t(lang, "settings_language"), reply_markup=build_language_kb(lang))
+    await query.answer()
+    await query.message.edit_text(t(DEFAULT_LANG, "settings_title") + "\n\n" + t(DEFAULT_LANG, "settings_language"), reply_markup=build_language_kb(DEFAULT_LANG))
 
 async def language_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not query:
-        return
     await query.answer()
     data = query.data
     user_id = query.from_user.id
@@ -1273,6 +1134,7 @@ async def language_callback_handler(update: Update, context: ContextTypes.DEFAUL
         selected = "auto"
     elif data and data.startswith("lang_"):
         selected = data.split("_",1)[1]
+
     async with async_session() as session:
         result = await session.execute(select(User).where(User.id == user_id))
         user = result.scalar_one_or_none()
@@ -1283,73 +1145,40 @@ async def language_callback_handler(update: Update, context: ContextTypes.DEFAUL
         else:
             await session.execute(sa_update(User).where(User.id == user_id).values(preferred_language=selected))
             await session.commit()
+
     await query.message.reply_text(t(DEFAULT_LANG, "lang_set_success", lang=selected or "auto"))
 
-async def get_user_language(session: AsyncSession, user_id: int, update: Optional[Update] = None) -> str:
-    result = await session.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    preferred = getattr(user, "preferred_language", None) if user else None
-    if preferred and preferred != "auto":
-        return preferred
-    if update and getattr(update, "effective_user", None):
-        tlang = (update.effective_user.language_code or "").split("-")[0].lower()
-        if tlang in TRANSLATIONS:
-            return tlang
-    return DEFAULT_LANG
-
-async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.message.reply_text("Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).")
-    else:
-        await update.effective_message.reply_text("Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).")
-    return WITHDRAW_WALLET
-
-async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# -----------------------
+# Admin commands: binance toggles, admin_cmds
+# -----------------------
+async def cmd_use_binance_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    args = context.args
-    if args:
-        wallet_address = args[0]
-        wallet_network = args[1] if len(args) > 1 else ''
-        async with async_session() as session:
-            await update_user(session, user_id, wallet_address=wallet_address, wallet_network=wallet_network)
-        await update.effective_message.reply_text(f"Wallet saved:\n<code>{wallet_address}</code>\nNetwork: {wallet_network}", parse_mode="HTML")
-    else:
-        async with async_session() as session:
-            user = await get_user(session, user_id)
-        wallet_address = user.get('wallet_address')
-        wallet_network = user.get('wallet_network')
-        if wallet_address:
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("Use this wallet for next withdrawal", callback_data="withdraw_use_saved")]])
-            await update.effective_message.reply_text(f"Saved wallet:\n<code>{wallet_address}</code>\nNetwork: {wallet_network}", parse_mode="HTML", reply_markup=kb)
-        else:
-            await update.effective_message.reply_text("No withdrawal wallet saved. Set it with /wallet <address> [network]")
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    global USE_BINANCE
+    USE_BINANCE = True
+    await update.effective_message.reply_text("Binance price fetching ENABLED.")
+    await post_admin_log(context.bot, "Admin enabled Binance price fetching.")
 
-async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    async with async_session() as session:
-        lang = await get_user_language(session, update.effective_user.id, update=update)
-    await update.effective_message.reply_text(t(lang, "info_text"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+async def cmd_use_binance_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    global USE_BINANCE
+    USE_BINANCE = False
+    await update.effective_message.reply_text("Binance price fetching DISABLED; using simulated prices.")
+    await post_admin_log(context.bot, "Admin disabled Binance price fetching.")
 
-async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = ("/start - main menu\n/balance\n/invest\n/withdraw\n/wallet\n/history\n/information\n/help\n\nAdmin:\n/admin_cmds")
-    await update.effective_message.reply_text(help_text)
+async def cmd_binance_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    cache_info = ", ".join(f"{s}:{d['price']}" for s,d in _binance_cache.items())
+    await update.effective_message.reply_text(f"Binance enabled: {USE_BINANCE}\nCache TTL: {BINANCE_CACHE_TTL}s\nCache: {cache_info or 'empty'}")
 
-async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    async with async_session() as session:
-        lang = await get_user_language(session, update.effective_user.id, update=update)
-    WELCOME_TEXT = (
-        "Welcome to AiCrypto bot.\n"
-        "- Invest: deposit funds to provided wallet and upload proof (txid or screenshot).\n"
-        "- Withdraw: request withdrawals; admin will approve and process."
-    )
-    try:
-        await update.effective_message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
-    except Exception:
-        await update.effective_message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
-
-# -----------------------
-# Admin commands list
-# -----------------------
 def admin_commands_text() -> str:
     return (
         "🛠️ Admin Commands\n\n"
@@ -1373,7 +1202,189 @@ async def admin_cmds_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await update.effective_message.reply_text(admin_commands_text())
 
 # -----------------------
-# MAIN wiring
+# Misc helpers: pending, trade control
+# -----------------------
+async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ef_msg = update.effective_message
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await ef_msg.reply_text("Forbidden: admin only.")
+        return
+    async with async_session() as session:
+        result = await session.execute(select(Transaction).where(Transaction.status == 'pending').order_by(Transaction.created_at.asc()))
+        pending: List[Transaction] = result.scalars().all()
+    if not pending:
+        await ef_msg.reply_text("No pending transactions.")
+        return
+    for tx in pending:
+        proof = tx.proof or ""
+        username = None
+        try:
+            tg_user = await application.bot.get_chat(tx.user_id)
+            username = getattr(tg_user, "username", None)
+        except Exception:
+            username = None
+        try:
+            if proof.startswith("photo:"):
+                file_id = proof.split(":",1)[1]
+                await context.application.bot.send_photo(chat_id=user_id, photo=file_id, caption=tx_card_text(tx, username=username), parse_mode="HTML", reply_markup=admin_action_kb(tx.id))
+            else:
+                caption = tx_card_text(tx, username=username) + (f"\nProof: <code>{proof}</code>" if proof else "")
+                await context.application.bot.send_message(chat_id=user_id, text=caption, parse_mode="HTML", reply_markup=admin_action_kb(tx.id))
+        except Exception:
+            logger.exception("Failed to send pending tx %s to admin", tx.id)
+
+async def cmd_trade_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    global TRADING_ENABLED
+    TRADING_ENABLED = True
+    await update.effective_message.reply_text("Trading simulation ENABLED.")
+    await post_admin_log(context.bot, "Admin enabled trading simulation.")
+
+async def cmd_trade_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    global TRADING_ENABLED
+    TRADING_ENABLED = False
+    await update.effective_message.reply_text("Trading simulation DISABLED.")
+    await post_admin_log(context.bot, "Admin disabled trading simulation.")
+
+async def cmd_trade_freq(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.effective_message.reply_text("Usage: /trade_freq <minutes> (integer)")
+        return
+    minutes = max(1, int(args[0]))
+    global TRADING_FREQ_MINUTES
+    TRADING_FREQ_MINUTES = minutes
+    await update.effective_message.reply_text(f"Trading frequency set to {minutes} minutes. Will apply after restart or when triggered with /trade_now.")
+    await post_admin_log(context.bot, f"Admin set trading frequency to {minutes} minutes.")
+
+async def cmd_trade_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    await update.effective_message.reply_text("Running trading job now...")
+    await trading_job()
+    await update.effective_message.reply_text("Trading run completed.")
+    await post_admin_log(context.bot, "Admin triggered immediate trading run.")
+
+async def cmd_trade_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    await update.effective_message.reply_text(f"Trading: {'ENABLED' if TRADING_ENABLED else 'DISABLED'}\nFrequency: {TRADING_FREQ_MINUTES} minutes\nBinance enabled: {USE_BINANCE}")
+
+# -----------------------
+# MENU callback
+# -----------------------
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    if not query:
+        return
+    await query.answer()
+    data = query.data or ""
+
+    if data == "admin_commands":
+        uid = query.from_user.id
+        if not _is_admin(uid):
+            await query.message.reply_text("Forbidden: admin only.")
+            return
+        await query.message.reply_text(admin_commands_text())
+        return
+
+    if data == "lang_auto" or data.startswith("lang_"):
+        await language_callback_handler(update, context)
+        return
+
+    if data == "settings_set_wallet":
+        await settings_start_wallet(update, context)
+        return
+
+    if data == "menu_exit":
+        await cancel_conv(update, context)
+        async with async_session() as session:
+            lang = await get_user_language(session, query.from_user.id, update=update)
+        WELCOME_TEXT = (
+            "Welcome to AiCrypto bot.\n"
+            "- Invest: deposit funds to provided wallet and upload proof (txid or screenshot).\n"
+            "- Withdraw: request withdrawals; admin will approve and process."
+        )
+        try:
+            await query.message.edit_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+        except Exception:
+            await query.message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+        return
+
+    if data == "menu_balance":
+        async with async_session() as session:
+            await send_balance_message(query, session, query.from_user.id)
+        return
+
+    if data == "menu_history":
+        await history_command(update, context)
+        return
+
+    if data == "menu_referrals":
+        user_id = query.from_user.id
+        bot_username = (await context.bot.get_me()).username
+        referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+        async with async_session() as session:
+            lang = await get_user_language(session, user_id, update=update)
+        text = (f"👥 {t(lang,'settings_title')}\n\nShare this link:\n<code>{referral_link}</code>")
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Copy Link", switch_inline_query_current_chat=referral_link)], [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]])
+        await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        return
+
+    if data == "menu_settings":
+        async with async_session() as session:
+            lang = await get_user_language(session, query.from_user.id, update=update)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(t(lang,"change_language"), callback_data="settings_language")],
+            [InlineKeyboardButton(t(lang,"settings_wallet"), callback_data="settings_set_wallet")],
+            [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]
+        ])
+        await query.edit_message_text(t(lang, "settings_title"), reply_markup=kb)
+        return
+
+    if data == "settings_language":
+        await settings_language_open_callback(update, context)
+        return
+
+    if data == "menu_info":
+        async with async_session() as session:
+            lang = await get_user_language(session, query.from_user.id, update=update)
+        await query.edit_message_text(t(lang, "info_text"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+        return
+
+# -----------------------
+# Utilities
+# -----------------------
+async def get_user_language(session: AsyncSession, user_id: int, update: Optional[Update] = None) -> str:
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    preferred = getattr(user, "preferred_language", None) if user else None
+    if preferred and preferred != "auto":
+        return preferred if preferred in TRANSLATIONS else DEFAULT_LANG
+    if update and getattr(update, "effective_user", None):
+        tlang = (update.effective_user.language_code or "").lower().split("-")[0]
+        if tlang in TRANSLATIONS:
+            return tlang
+    return DEFAULT_LANG
+
+# -----------------------
+# Main wiring
 # -----------------------
 application: Optional[Application] = None
 _scheduler: Optional[AsyncIOScheduler] = None
@@ -1404,26 +1415,24 @@ def main():
         fallbacks=[CommandHandler('cancel', lambda u,c: cancel_conv(u,c))],
         allow_reentry=True,
     )
-
     application.add_handler(conv_handler)
 
-    # language & settings handlers
+    # language & settings
     application.add_handler(CallbackQueryHandler(settings_language_open_callback, pattern='^settings_language$'))
     application.add_handler(CallbackQueryHandler(language_callback_handler, pattern='^lang_'))
     application.add_handler(CallbackQueryHandler(language_callback_handler, pattern='^lang_auto$'))
 
-    # admin handlers (must be registered before generic menu handler)
+    # admin-specific callbacks (register before generic menu handler)
     application.add_handler(CallbackQueryHandler(admin_start_action_callback, pattern='^admin_start_(approve|reject)_\\d+$'))
     application.add_handler(CallbackQueryHandler(admin_confirm_callback, pattern='^admin_confirm_(approve|reject)_\\d+$'))
     application.add_handler(CallbackQueryHandler(admin_cancel_callback, pattern='^admin_cancel_\\d+$'))
-    application.add_handler(CallbackQueryHandler(menu_callback, pattern='^admin_commands$'))  # handled inside menu_callback too
 
     # history callbacks
     application.add_handler(CallbackQueryHandler(history_page_callback, pattern='^history_page_\\d+_\\d+$'))
     application.add_handler(CallbackQueryHandler(history_details_callback, pattern='^history_details_\\d+_\\d+_\\d+$'))
     application.add_handler(CallbackQueryHandler(history_back_callback, pattern='^history_back_\\d+_\\d+$'))
 
-    # generic menu handler (after specific handlers)
+    # generic menu callback (after specific)
     application.add_handler(CallbackQueryHandler(menu_callback))
 
     # commands
@@ -1431,8 +1440,8 @@ def main():
     application.add_handler(CommandHandler("balance", balance_command))
     application.add_handler(CommandHandler("wallet", wallet_command))
     application.add_handler(CommandHandler("history", history_command))
-    application.add_handler(CommandHandler("information", information_command))
-    application.add_handler(CommandHandler("help", help_cmd))
+    application.add_handler(CommandHandler("information", lambda u,c: asyncio.create_task(u.effective_message.reply_text(t(DEFAULT_LANG,"info_text")))))
+    application.add_handler(CommandHandler("help", lambda u,c: asyncio.create_task(u.effective_message.reply_text("Use /admin_cmds for admin commands."))))
     application.add_handler(CommandHandler("pending", admin_pending_command))
 
     # admin trade control commands
@@ -1442,7 +1451,7 @@ def main():
     application.add_handler(CommandHandler("trade_now", cmd_trade_now))
     application.add_handler(CommandHandler("trade_status", cmd_trade_status))
 
-    # binance control
+    # Binance controls
     application.add_handler(CommandHandler("use_binance_on", cmd_use_binance_on))
     application.add_handler(CommandHandler("use_binance_off", cmd_use_binance_off))
     application.add_handler(CommandHandler("binance_status", cmd_binance_status))
@@ -1458,8 +1467,8 @@ def main():
         _scheduler = AsyncIOScheduler(event_loop=loop)
     except TypeError:
         _scheduler = AsyncIOScheduler()
-    _scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     _scheduler.add_job(trading_job, 'interval', minutes=TRADING_FREQ_MINUTES, next_run_time=datetime.utcnow() + timedelta(seconds=15))
+    _scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     _scheduler.start()
 
     logger.info("AiCrypto Bot STARTED")
