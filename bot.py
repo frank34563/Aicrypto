@@ -1,13 +1,10 @@
-# Full final bot.py — repository file with a small change:
-# - Added welcome/info text shown above the main menu whenever /start or the Main Menu is displayed.
-# - The welcome text exactly as requested:
-#   "Welcome to AiCrypto bot.
-#   - Invest: deposit funds to provided wallet and upload proof (txid or screenshot). and produce the full code 
-#   - Withdraw: request withdrawals; admin will approve and process."
-# Note: I inserted the requested text above the menu when showing the menu (start_handler and menu_exit flow).
+# Full final bot.py — repository file with admin notification username added
+# Change: include the user's Telegram username in admin notifications for deposits and withdrawals
+# - Modified send_admin_tx_notification(bot, tx, proof_file_id=None, username=None) to accept username
+# - Updated tx_card_text to optionally show username (if provided to sender) — kept Transaction model unchanged
+# - Updated calls to send_admin_tx_notification in deposit and withdraw flows and admin_pending_command
 #
-# All other behavior and code is preserved from the repository version (commit 8286da3).
-# Restart your bot after replacing this file.
+# Other code preserved from repository commit 8286da3; only the targeted changes described above were applied.
 
 import os
 import logging
@@ -240,7 +237,7 @@ TRANSLATIONS = {
         "lang_es": "Español",
         "lang_set_success": "Idioma actualizado a {lang}.",
         "lang_current": "Idioma actual: {lang}",
-        "info_text": "ℹ️ Información\n\nBienvenido al bot AiCrypto.\n- Invertir: deposita fondos en la billetera proporcionada y sube comprobante (txid o captura).\n- Retirar: solicita retir[...]",  # truncated in dict for brevity; full text used where needed
+        "info_text": "ℹ️ Información\n\nBienvenido al bot AiCrypto.\n- Invertir: deposita fondos en la billetera proporcionada y sube comprobante (txid o captura).\n- Retirar: solicita retir[...]",  # truncated for brevity
     }
 }
 DEFAULT_LANG = "en"
@@ -374,13 +371,19 @@ def is_probable_wallet(address: str) -> bool:
         return True
     return False
 
-def tx_card_text(tx: Transaction) -> str:
+def tx_card_text(tx: Transaction, username: Optional[str] = None) -> str:
+    """
+    Build admin-facing card for a transaction. If username is provided, include it.
+    """
     emoji = "📥" if (tx.type == 'invest') else ("💸" if tx.type == 'withdraw' else "💰")
     created = tx.created_at.strftime("%Y-%m-%d %H:%M:%S") if tx.created_at else "-"
+    user_line = f"User: <code>{tx.user_id}</code>"
+    if username:
+        user_line += f" (@{username})"
     return (f"{emoji} <b>Ref {tx.ref}</b>\n"
             f"Type: <b>{(tx.type or '').upper()}</b>\n"
             f"Amount: <b>{float(tx.amount):.2f}$</b>\n"
-            f"User: <code>{tx.user_id}</code>\n"
+            f"{user_line}\n"
             f"Status: <b>{(tx.status or '').upper()}</b>\n"
             f"Created: {created}\n")
 
@@ -404,8 +407,12 @@ def admin_action_kb(tx_db_id: int):
          InlineKeyboardButton("❌ Reject", callback_data=f"admin_start_reject_{tx_db_id}")]
     ])
 
-async def send_admin_tx_notification(bot, tx: Transaction, proof_file_id: Optional[str] = None):
-    text = tx_card_text(tx)
+async def send_admin_tx_notification(bot, tx: Transaction, proof_file_id: Optional[str] = None, username: Optional[str] = None):
+    """
+    Send a notification to the admin for a transaction.
+    Includes optional username if provided.
+    """
+    text = tx_card_text(tx, username=username)
     try:
         if proof_file_id and proof_file_id.startswith("photo:"):
             file_id = proof_file_id.split(":",1)[1]
@@ -451,13 +458,6 @@ async def daily_profit_job():
 # Menu callback handler (updated to expose language + wallet settings)
 # -----------------------
 
-# The extra welcome text to show above the main menu:
-WELCOME_TEXT = (
-    "Welcome to AiCrypto bot.\n"
-    "- Invest: deposit funds to provided wallet and upload proof (txid or screenshot). and produce the full code \n"
-    "- Withdraw: request withdrawals; admin will approve and process."
-)
-
 async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
@@ -486,18 +486,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # compute language for the calling user to render menu
             async with async_session() as session:
                 lang = await get_user_language(session, query.from_user.id, update=update)
-            # send the welcome text above the menu
-            try:
-                await query.message.edit_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
-            except Exception:
-                # if editing fails (maybe message changed), send as new message
-                await query.message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+            await query.message.edit_text(t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
         except Exception:
             # fallback: send a plain menu message
-            try:
-                await query.message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
-            except Exception:
-                pass
+            await query.message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
         return
 
     if data == "menu_balance":
@@ -587,7 +579,7 @@ async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         await send_balance_message(update.effective_message, session, update.effective_user.id)
 
 # -----------------------
-# INVEST flow (unchanged behavior)
+# INVEST flow (unchanged behavior) — with admin username passed to admin notification
 # -----------------------
 
 async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -692,18 +684,29 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     except Exception:
         logger.exception("Failed to send deposit request message to user %s", user_id)
 
+    # fetch transaction from DB to pass to admin notification
     async with async_session() as session:
         result = await session.execute(select(Transaction).where(Transaction.id == tx_db_id))
         tx = result.scalar_one_or_none()
-    await send_admin_tx_notification(context.application.bot, tx, proof_file_id=proof)
-    await post_admin_log(context.application.bot, f"New INVEST #{tx_db_id} ref {tx_ref} user {user_id} amount {amount:.2f}$")
+
+    # get user's telegram username if available
+    username = None
+    if query and getattr(query, "from_user", None):
+        username = (query.from_user.username or "").strip()
+    elif update and getattr(update, "effective_user", None):
+        username = (update.effective_user.username or "").strip()
+    if username == "":
+        username = None
+
+    await send_admin_tx_notification(context.application.bot, tx, proof_file_id=proof, username=username)
+    await post_admin_log(context.application.bot, f"New INVEST #{tx_db_id} ref {tx_ref} user {user_id} username @{username or 'N/A'} amount {amount:.2f}$")
 
     context.user_data.pop('invest_amount', None)
     context.user_data.pop('invest_proof', None)
     return ConversationHandler.END
 
 # -----------------------
-# WITHDRAW flow (unchanged behavior)
+# WITHDRAW flow (unchanged behavior) — with admin username passed to admin notification
 # -----------------------
 
 async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -850,8 +853,14 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
     async with async_session() as session:
         result = await session.execute(select(Transaction).where(Transaction.id == tx_db_id))
         tx = result.scalar_one_or_none()
-    await send_admin_tx_notification(context.application.bot, tx, proof_file_id=None)
-    await post_admin_log(context.application.bot, f"New WITHDRAW #{tx_db_id} ref {tx_ref} user {user_id} amount {amount:.2f}$")
+
+    # get username to include in admin notification
+    username = (query.from_user.username or "").strip() if getattr(query, "from_user", None) else None
+    if username == "":
+        username = None
+
+    await send_admin_tx_notification(context.application.bot, tx, proof_file_id=None, username=username)
+    await post_admin_log(context.application.bot, f"New WITHDRAW #{tx_db_id} ref {tx_ref} user {user_id} username @{username or 'N/A'} amount {amount:.2f}$")
 
     context.user_data.pop('withdraw_amount', None)
     context.user_data.pop('withdraw_wallet', None)
@@ -1032,7 +1041,7 @@ async def language_callback_handler(update: Update, context: ContextTypes.DEFAUL
     await query.message.reply_text(t(effective_lang, "lang_set_success", lang=LANG_DISPLAY.get(effective_lang, effective_lang)))
 
 # -----------------------
-# /pending, history, other handlers (unchanged)
+# /pending, history, other handlers (unchanged) — ensure admin_pending sends username too
 # -----------------------
 
 async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1049,12 +1058,19 @@ async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
     for tx in pending:
         proof = tx.proof or ""
+        # retrieve username for tx.user_id
+        username = None
+        try:
+            tg_user = await context.bot.get_chat(tx.user_id)
+            username = getattr(tg_user, "username", None)
+        except Exception:
+            username = None
         try:
             if proof.startswith("photo:"):
                 file_id = proof.split(":",1)[1]
-                await context.application.bot.send_photo(chat_id=user_id, photo=file_id, caption=tx_card_text(tx), parse_mode="HTML", reply_markup=admin_action_kb(tx.id))
+                await context.application.bot.send_photo(chat_id=user_id, photo=file_id, caption=tx_card_text(tx, username=username), parse_mode="HTML", reply_markup=admin_action_kb(tx.id))
             else:
-                caption = tx_card_text(tx) + (f"\nProof: <code>{proof}</code>" if proof else "")
+                caption = tx_card_text(tx, username=username) + (f"\nProof: <code>{proof}</code>" if proof else "")
                 await context.application.bot.send_message(chat_id=user_id, text=caption, parse_mode="HTML", reply_markup=admin_action_kb(tx.id))
         except Exception:
             logger.exception("Failed to send pending tx %s to admin", tx.id)
@@ -1277,12 +1293,11 @@ async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TY
     return WITHDRAW_WALLET
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # display the requested welcome text above the localized menu title and keyboard
+    # display the localized menu title and keyboard
     async with async_session() as session:
         lang = await get_user_language(session, update.effective_user.id, update=update)
     try:
-        # send the welcome text then the menu title/keyboard
-        await update.effective_message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+        await update.effective_message.reply_text(t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
     except Exception:
         await update.effective_message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
 
