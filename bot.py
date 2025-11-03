@@ -20,6 +20,7 @@ from typing import Dict, Optional, List
 from dotenv import load_dotenv
 
 from decimal import Decimal, ROUND_HALF_UP
+import httpx
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.base import JobLookupError
@@ -66,6 +67,15 @@ SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('
 
 MENU_FULL_TWO_COLUMN = os.getenv('MENU_FULL_TWO_COLUMN', 'true').lower() in ('1','true','yes','on')
 DATABASE_URL = os.getenv('DATABASE_URL')
+
+# Binance and trading config
+BINANCE_CACHE_TTL = int(os.getenv('BINANCE_CACHE_TTL', '10'))  # seconds
+BINANCE_API_URL = "https://api.binance.com/api/v3/ticker/price"
+
+# Global trading configuration (can be modified by admin commands)
+GLOBAL_DAILY_PERCENT = 1.5  # default 1.5% daily
+GLOBAL_TRADE_PERCENT = 0.5  # default 0.5% per trade
+GLOBAL_TRADES_PER_DAY = 144  # default
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -115,6 +125,26 @@ class Transaction(Base):
     proof = Column(String)          # txid or file_id (format: 'photo:<file_id>' for photos)
     wallet = Column(String)
     network = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UserTradeConfig(Base):
+    __tablename__ = 'user_trade_configs'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, unique=True)
+    pair = Column(String)  # e.g., 'BTCUSDT'
+    percent_per_trade = Column(Numeric(10, 6))  # e.g., 0.5 for 0.5%
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class DailySummary(Base):
+    __tablename__ = 'daily_summaries'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger)
+    date = Column(DateTime)  # date for the summary
+    daily_percent = Column(Numeric(10, 6))  # percent gained
+    profit_amount = Column(Numeric(18, 6))  # profit in USDT
+    total_balance = Column(Numeric(18, 6))  # balance at end of day
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -200,6 +230,63 @@ async def log_transaction(session: AsyncSession, **data):
     await session.commit()
     await session.refresh(tx)
     return tx.id, data['ref']
+
+# User trade config helpers
+async def get_user_trade_config(session: AsyncSession, user_id: int) -> Optional[Dict]:
+    """Get per-user trade configuration"""
+    result = await session.execute(select(UserTradeConfig).where(UserTradeConfig.user_id == user_id))
+    config = result.scalar_one_or_none()
+    if not config:
+        return None
+    return {
+        'pair': config.pair,
+        'percent_per_trade': float(config.percent_per_trade),
+    }
+
+async def set_user_trade_config(session: AsyncSession, user_id: int, pair: str, percent_per_trade: float):
+    """Set per-user trade configuration"""
+    result = await session.execute(select(UserTradeConfig).where(UserTradeConfig.user_id == user_id))
+    config = result.scalar_one_or_none()
+    if config:
+        config.pair = pair
+        config.percent_per_trade = percent_per_trade
+    else:
+        config = UserTradeConfig(user_id=user_id, pair=pair, percent_per_trade=percent_per_trade)
+        session.add(config)
+    await session.commit()
+
+# Binance price cache with TTL
+_binance_price_cache = {}  # {symbol: (price, timestamp)}
+_binance_cache_lock = asyncio.Lock()
+
+async def fetch_binance_price(symbol: str) -> Optional[float]:
+    """
+    Fetch price from Binance API with TTL cache.
+    Returns None if fetch fails.
+    """
+    global _binance_price_cache
+    
+    async with _binance_cache_lock:
+        # Check cache
+        if symbol in _binance_price_cache:
+            price, timestamp = _binance_price_cache[symbol]
+            if (datetime.utcnow() - timestamp).total_seconds() < BINANCE_CACHE_TTL:
+                logger.debug(f"Cache hit for {symbol}: {price}")
+                return price
+        
+        # Fetch from Binance
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(BINANCE_API_URL, params={'symbol': symbol})
+                response.raise_for_status()
+                data = response.json()
+                price = float(data['price'])
+                _binance_price_cache[symbol] = (price, datetime.utcnow())
+                logger.info(f"Fetched Binance price for {symbol}: {price}")
+                return price
+        except Exception as e:
+            logger.warning(f"Failed to fetch Binance price for {symbol}: {e}")
+            return None
 
 # Conversation states
 INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, WITHDRAW_CONFIRM, HISTORY_PAGE, HISTORY_DETAILS = range(8)
@@ -486,7 +573,7 @@ TRADING_JOB_ID = 'trading_job_scheduled'
 _trading_job = None
 
 # -----------------------
-# Trading job: produce random asset alerts with live-like prices and update user balances
+# Trading job: fetch Binance prices with cache, use per-user config, update balances
 # -----------------------
 async def trading_job():
     if not TRADING_ENABLED:
@@ -505,28 +592,44 @@ async def trading_job():
                 bal = float(user.balance or 0.0)
                 if bal <= 1.0:
                     continue
-                if random.random() < 0.5:
+                if random.random() < 0.5:  # 50% chance to trade
                     continue
-                pair = pick_random_pair()
-                async with _price_lock:
-                    live_price = simulate_price_walk(pair)
-                spread = random.uniform(0.001, 0.006)
-                # produce raw float rates
-                buy_rate_raw = live_price * (1.0 - spread/2)
-                sell_rate_raw = live_price * (1.0 + spread/2 + random.uniform(0.0001, 0.0009))
-                # format rates as plain decimals (no scientific notation), fixed decimals
-                buy_rate = format_price(buy_rate_raw, decimals=12)
-                sell_rate = format_price(sell_rate_raw, decimals=12)
-                # expected daily slice
-                runs_per_day = max(1.0, TRADES_PER_DAY)
-                daily_rate = 0.015
-                base = bal * daily_rate / runs_per_day
-                profit = round(base * random.uniform(0.3, 1.8), 6)
+                
+                # Get per-user config or use global
+                user_config = await get_user_trade_config(session, user.id)
+                if user_config:
+                    pair = user_config['pair']
+                    percent_per_trade = user_config['percent_per_trade']
+                else:
+                    # Use global config with random pair
+                    pair = random.choice(['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'LTCUSDT'])
+                    percent_per_trade = GLOBAL_TRADE_PERCENT
+                
+                # Try to fetch Binance price, fallback to simulated
+                live_price = await fetch_binance_price(pair)
+                if live_price is None:
+                    # Fallback: simulate price walk
+                    logger.debug(f"Using simulated price for {pair}")
+                    if pair not in PRICE_PAIRS:
+                        PRICE_PAIRS[pair] = 50000.0 if 'BTC' in pair else 2000.0 if 'ETH' in pair else 300.0
+                    async with _price_lock:
+                        live_price = simulate_price_walk(pair)
+                
+                # Calculate profit based on percent_per_trade
+                profit = round((percent_per_trade / 100.0) * bal, 6)
                 if profit <= 0:
                     continue
+                
+                # Update balances
                 new_balance = bal + profit
+                new_daily_profit = float(user.daily_profit or 0.0) + profit
                 new_total_profit = float(user.total_profit or 0.0) + profit
-                await update_user(session, user.id, balance=new_balance, total_profit=new_total_profit)
+                await update_user(session, user.id, 
+                                balance=new_balance, 
+                                daily_profit=new_daily_profit,
+                                total_profit=new_total_profit)
+                
+                # Log transaction
                 tx_id, tx_ref = await log_transaction(
                     session,
                     user_id=user.id,
@@ -539,11 +642,27 @@ async def trading_job():
                     network='',
                     created_at=now
                 )
-                profit_percent = round((profit / bal) * 100, 6)
-                base_asset, quote_asset = pair.split("/")
-                trading_pair_str = f"{base_asset} → {quote_asset} → {base_asset}"
-                display_balance = round(new_balance, 6)
+                
+                # Create spread for display
+                spread = random.uniform(0.001, 0.006)
+                buy_rate_raw = live_price * (1.0 - spread/2)
+                sell_rate_raw = live_price * (1.0 + spread/2 + random.uniform(0.0001, 0.0009))
+                buy_rate = format_price(buy_rate_raw, decimals=8)
+                sell_rate = format_price(sell_rate_raw, decimals=8)
+                
+                profit_percent = round((profit / bal) * 100, 2)
+                display_balance = format_price(new_balance, decimals=2)
                 date_str = now.strftime("%d.%m.%Y %H:%M")
+                
+                # Format pair for display (BTCUSDT -> BTC → USDT → BTC)
+                if pair.endswith('USDT'):
+                    base_asset = pair[:-4]
+                    quote_asset = 'USDT'
+                else:
+                    base_asset = pair[:3]
+                    quote_asset = pair[3:]
+                trading_pair_str = f"{base_asset} → {quote_asset} → {base_asset}"
+                
                 trade_text = (
                     "📢 AI trade was executed\n\n"
                     f"📅 Date: {date_str}\n"
@@ -559,6 +678,69 @@ async def trading_job():
                     logger.debug("Unable to send trade alert to user %s (may not have interacted yet)", user.id)
             except Exception:
                 logger.exception("trading_job failed for user %s", getattr(user, "id", "<unknown>"))
+
+# -----------------------
+# Daily summary job: runs at 23:59 UTC to summarize daily trading
+# -----------------------
+async def daily_summary_job():
+    """Send daily summary to users and persist records"""
+    logger.info("daily_summary_job: starting daily summary")
+    now = datetime.utcnow()
+    today_date = now.date()
+    
+    async with async_session() as session:
+        result = await session.execute(select(User))
+        users = result.scalars().all()
+        
+        for user in users:
+            try:
+                user_id = user.id
+                balance = float(user.balance or 0.0)
+                daily_profit = float(user.daily_profit or 0.0)
+                
+                # Skip users with no activity
+                if balance <= 0 and daily_profit <= 0:
+                    continue
+                
+                # Calculate daily percent
+                starting_balance = balance - daily_profit
+                if starting_balance > 0:
+                    daily_percent = (daily_profit / starting_balance) * 100
+                else:
+                    daily_percent = 0.0
+                
+                # Save daily summary
+                summary = DailySummary(
+                    user_id=user_id,
+                    date=datetime(today_date.year, today_date.month, today_date.day),
+                    daily_percent=daily_percent,
+                    profit_amount=daily_profit,
+                    total_balance=balance,
+                    created_at=now
+                )
+                session.add(summary)
+                
+                # Send message to user
+                summary_text = (
+                    "📊 Trading work for today is completed.\n"
+                    f"💹 Total profit amounted to {daily_percent:.2f}%\n"
+                    f"💰 Profit amount: {daily_profit:.2f} USDT\n"
+                    f"📈 Total balance: {balance:.2f} USDT"
+                )
+                
+                try:
+                    await application.bot.send_message(chat_id=user_id, text=summary_text)
+                except Exception as e:
+                    logger.debug(f"Unable to send daily summary to user {user_id}: {e}")
+                
+                # Reset daily_profit for next day
+                await update_user(session, user_id, daily_profit=0.0)
+                
+            except Exception as e:
+                logger.exception(f"daily_summary_job failed for user {getattr(user, 'id', '<unknown>')}: {e}")
+        
+        await session.commit()
+    logger.info("daily_summary_job: completed")
 
 # -----------------------
 # MENU CALLBACK (forwards special callbacks; handles menu items)
@@ -1193,6 +1375,181 @@ async def cmd_set_trades_per_day(update: Update, context: ContextTypes.DEFAULT_T
     )
     await post_admin_log(context.bot, f"Admin set trades per day to {trades_per_day} (frequency: {freq_minutes} minutes).")
 
+async def cmd_set_daily_percent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /set_daily_percent <percent>"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text("Usage: /set_daily_percent <percent> (e.g., 1.5 for 1.5%)")
+        return
+    
+    try:
+        percent = float(args[0])
+    except ValueError:
+        await update.effective_message.reply_text("Invalid number. Usage: /set_daily_percent <percent>")
+        return
+    
+    if percent <= 0:
+        await update.effective_message.reply_text("Daily percent must be positive.")
+        return
+    
+    global GLOBAL_DAILY_PERCENT
+    GLOBAL_DAILY_PERCENT = percent
+    
+    await update.effective_message.reply_text(f"✅ Global daily percent set to {percent}%")
+    await post_admin_log(context.bot, f"Admin set global daily percent to {percent}%")
+
+async def cmd_set_trade_percent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /set_trade_percent <percent>"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text("Usage: /set_trade_percent <percent> (e.g., 0.5 for 0.5% per trade)")
+        return
+    
+    try:
+        percent = float(args[0])
+    except ValueError:
+        await update.effective_message.reply_text("Invalid number. Usage: /set_trade_percent <percent>")
+        return
+    
+    if percent <= 0:
+        await update.effective_message.reply_text("Trade percent must be positive.")
+        return
+    
+    global GLOBAL_TRADE_PERCENT
+    GLOBAL_TRADE_PERCENT = percent
+    
+    await update.effective_message.reply_text(f"✅ Global trade percent set to {percent}%")
+    await post_admin_log(context.bot, f"Admin set global trade percent to {percent}%")
+
+async def cmd_set_user_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /set_user_trade <user_id> <pair> <percent>"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    args = context.args
+    if len(args) < 3:
+        await update.effective_message.reply_text("Usage: /set_user_trade <user_id> <pair> <percent>\nExample: /set_user_trade 123456 BTCUSDT 0.5")
+        return
+    
+    try:
+        target_user_id = int(args[0])
+        pair = args[1].upper()
+        percent = float(args[2])
+    except ValueError:
+        await update.effective_message.reply_text("Invalid arguments. Usage: /set_user_trade <user_id> <pair> <percent>")
+        return
+    
+    if percent <= 0:
+        await update.effective_message.reply_text("Percent must be positive.")
+        return
+    
+    async with async_session() as session:
+        await set_user_trade_config(session, target_user_id, pair, percent)
+    
+    await update.effective_message.reply_text(
+        f"✅ User {target_user_id} trade config set:\n"
+        f"Pair: {pair}\n"
+        f"Percent per trade: {percent}%"
+    )
+    await post_admin_log(context.bot, f"Admin set user {target_user_id} trade config: {pair} @ {percent}%")
+
+async def cmd_trading_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /trading_status - show current config"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    # Get per-user overrides count
+    async with async_session() as session:
+        result = await session.execute(select(UserTradeConfig))
+        user_configs = result.scalars().all()
+        override_count = len(user_configs)
+        
+        override_text = ""
+        if user_configs:
+            override_text = "\n\n👥 Per-user overrides:\n"
+            for cfg in user_configs[:10]:  # Show max 10
+                override_text += f"  User {cfg.user_id}: {cfg.pair} @ {float(cfg.percent_per_trade)}%\n"
+            if len(user_configs) > 10:
+                override_text += f"  ... and {len(user_configs) - 10} more\n"
+    
+    status_text = (
+        "⚙️ Trading Configuration Status\n\n"
+        f"🔄 Trading: {'ENABLED' if TRADING_ENABLED else 'DISABLED'}\n"
+        f"⏱ Frequency: {TRADING_FREQ_MINUTES} minutes\n"
+        f"📊 Trades per day: {TRADES_PER_DAY}\n"
+        f"💹 Global daily percent: {GLOBAL_DAILY_PERCENT}%\n"
+        f"📈 Global trade percent: {GLOBAL_TRADE_PERCENT}%\n"
+        f"👤 User overrides: {override_count}"
+        f"{override_text}"
+    )
+    
+    await update.effective_message.reply_text(status_text)
+
+async def cmd_trading_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /trading_summary [YYYY-MM-DD] - show aggregated daily summary"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    # Parse date argument or use today
+    args = context.args
+    if args:
+        try:
+            target_date = datetime.strptime(args[0], "%Y-%m-%d").date()
+        except ValueError:
+            await update.effective_message.reply_text("Invalid date format. Use YYYY-MM-DD")
+            return
+    else:
+        target_date = datetime.utcnow().date()
+    
+    async with async_session() as session:
+        # Get all summaries for the date
+        start_dt = datetime(target_date.year, target_date.month, target_date.day)
+        end_dt = start_dt + timedelta(days=1)
+        
+        result = await session.execute(
+            select(DailySummary).where(
+                DailySummary.date >= start_dt,
+                DailySummary.date < end_dt
+            )
+        )
+        summaries = result.scalars().all()
+        
+        if not summaries:
+            await update.effective_message.reply_text(f"No trading summaries found for {target_date}")
+            return
+        
+        # Aggregate
+        total_users = len(summaries)
+        total_profit = sum(float(s.profit_amount) for s in summaries)
+        total_balance = sum(float(s.total_balance) for s in summaries)
+        avg_percent = sum(float(s.daily_percent) for s in summaries) / total_users if total_users > 0 else 0
+        
+        summary_text = (
+            f"📊 Trading Summary for {target_date}\n\n"
+            f"👥 Active users: {total_users}\n"
+            f"💰 Total profit: {total_profit:.2f} USDT\n"
+            f"📈 Total balance: {total_balance:.2f} USDT\n"
+            f"💹 Average daily %: {avg_percent:.2f}%"
+        )
+        
+        await update.effective_message.reply_text(summary_text)
+
 # -----------------------
 # HISTORY handlers (unchanged)
 # -----------------------
@@ -1568,6 +1925,11 @@ def main():
     application.add_handler(CommandHandler("trade_now", cmd_trade_now))
     application.add_handler(CommandHandler("trade_status", cmd_trade_status))
     application.add_handler(CommandHandler("set_trades_per_day", cmd_set_trades_per_day))
+    application.add_handler(CommandHandler("set_daily_percent", cmd_set_daily_percent))
+    application.add_handler(CommandHandler("set_trade_percent", cmd_set_trade_percent))
+    application.add_handler(CommandHandler("set_user_trade", cmd_set_user_trade))
+    application.add_handler(CommandHandler("trading_status", cmd_trading_status))
+    application.add_handler(CommandHandler("trading_summary", cmd_trading_summary))
 
     application.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
@@ -1579,6 +1941,8 @@ def main():
         _scheduler = AsyncIOScheduler()
     # daily profit
     _scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
+    # daily summary job at 23:59 UTC
+    _scheduler.add_job(daily_summary_job, 'cron', hour=23, minute=59)
     # SCHEDULE trading_job directly as coroutine — not via lambda
     _scheduler.add_job(
         trading_job, 
