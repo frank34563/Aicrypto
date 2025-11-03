@@ -71,6 +71,7 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 # Binance and trading config
 BINANCE_CACHE_TTL = int(os.getenv('BINANCE_CACHE_TTL', '10'))  # seconds
 BINANCE_API_URL = "https://api.binance.com/api/v3/ticker/price"
+USE_BINANCE = True  # Can be toggled by admin commands
 
 # Global trading configuration (can be modified by admin commands)
 GLOBAL_DAILY_PERCENT = 1.5  # default 1.5% daily
@@ -262,9 +263,14 @@ _binance_cache_lock = asyncio.Lock()
 async def fetch_binance_price(symbol: str) -> Optional[float]:
     """
     Fetch price from Binance API with TTL cache.
-    Returns None if fetch fails.
+    Returns None if fetch fails or if USE_BINANCE is disabled.
     """
     global _binance_price_cache
+    
+    # Check if Binance is enabled
+    if not USE_BINANCE:
+        logger.debug(f"Binance API disabled, skipping fetch for {symbol}")
+        return None
     
     async with _binance_cache_lock:
         # Check cache
@@ -1550,6 +1556,82 @@ async def cmd_trading_summary(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         await update.effective_message.reply_text(summary_text)
 
+async def cmd_use_binance_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /use_binance_on - Enable Binance API"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    global USE_BINANCE
+    USE_BINANCE = True
+    
+    await update.effective_message.reply_text("✅ Binance API enabled")
+    await post_admin_log(context.bot, "Admin enabled Binance API")
+
+async def cmd_use_binance_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /use_binance_off - Disable Binance API"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    global USE_BINANCE
+    USE_BINANCE = False
+    
+    await update.effective_message.reply_text("✅ Binance API disabled (will use simulated prices)")
+    await post_admin_log(context.bot, "Admin disabled Binance API")
+
+async def cmd_binance_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /binance_status - Show Binance API status"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    status_text = (
+        "🔗 Binance API Status\n\n"
+        f"Status: {'✅ ENABLED' if USE_BINANCE else '❌ DISABLED'}\n"
+        f"API URL: {BINANCE_API_URL}\n"
+        f"Cache TTL: {BINANCE_CACHE_TTL}s\n"
+        f"Cache entries: {len(_binance_price_cache)}"
+    )
+    
+    await update.effective_message.reply_text(status_text)
+
+async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /admin_cmds - Show all admin commands"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    commands_text = (
+        "🛠 Admin Commands List\n\n"
+        "**Trading Control:**\n"
+        "/trade_on - Enable trading\n"
+        "/trade_off - Disable trading\n"
+        "/trade_status - Show trading status\n"
+        "/trade_now - Trigger trading job now\n"
+        "/trade_freq [minutes] - Set trading frequency\n\n"
+        "**Binance Control:**\n"
+        "/use_binance_on - Enable Binance API\n"
+        "/use_binance_off - Disable Binance API\n"
+        "/binance_status - Show Binance status\n\n"
+        "**Configuration:**\n"
+        "/set_trades_per_day <num> - Set trades per day\n"
+        "/set_daily_percent <percent> - Set daily profit target\n"
+        "/set_trade_percent <percent> - Set trade percent\n"
+        "/set_user_trade <user_id> <pair> <percent> - Set user config\n"
+        "/trading_status - Show trading config\n"
+        "/trading_summary [date] - View daily summary\n\n"
+        "**Admin:**\n"
+        "/admin_cmds - Show this message\n"
+        "/pending - Show pending transactions"
+    )
+    
+    await update.effective_message.reply_text(commands_text)
+
 # -----------------------
 # HISTORY handlers (unchanged)
 # -----------------------
@@ -1930,6 +2012,14 @@ def main():
     application.add_handler(CommandHandler("set_user_trade", cmd_set_user_trade))
     application.add_handler(CommandHandler("trading_status", cmd_trading_status))
     application.add_handler(CommandHandler("trading_summary", cmd_trading_summary))
+    
+    # Binance control commands
+    application.add_handler(CommandHandler("use_binance_on", cmd_use_binance_on))
+    application.add_handler(CommandHandler("use_binance_off", cmd_use_binance_off))
+    application.add_handler(CommandHandler("binance_status", cmd_binance_status))
+    
+    # Admin helper commands
+    application.add_handler(CommandHandler("admin_cmds", cmd_admin_cmds))
 
     application.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
