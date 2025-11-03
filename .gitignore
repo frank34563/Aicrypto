@@ -1,4 +1,4 @@
 __pycache__/
 *.pyc
-bot.py.backup
-build_complete_bot.py
+bot.db
+bot_fallback.db
