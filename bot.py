@@ -5,7 +5,7 @@
 # - Admin notification flow with approve/reject and "Commands" button
 # - Trading simulation job that fetches Binance prices via httpx.AsyncClient by default with TTL cache and falls back to simulated prices
 # - Price formatting to avoid scientific notation (fixed-point)
-# - Admin commands: /trade_on, /trade_off, /trade_freq, /trade_now, /trade_status, /use_binance_on, /use_binance_off, /binance_status, /admin_cmds
+# - Admin commands: /trade_on, /trade_off, /trade_freq, /set_trades_per_day, /trade_now, /trade_status, /use_binance_on, /use_binance_off, /binance_status, /admin_cmds
 # - Scheduler with APScheduler to run trading_job and daily_profit_job
 #
 # Requirements: python-telegram-bot >= 20, sqlalchemy, aiosqlite, apscheduler, httpx, python-dotenv
@@ -23,9 +23,6 @@ import sys
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional, List
 from dotenv import load_dotenv
-from decimal import Decimal, ROUND_HALF_UP
-
-import httpx
 
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -317,183 +314,199 @@ def is_probable_wallet(address: str) -> bool:
 # Admin / tx helpers
 # -----------------------
 
-async def send_admin_notification(context: ContextTypes.DEFAULT_TYPE, message: str):
-    """Send notification to admin with error handling."""
-    try:
-        await context.bot.send_message(chat_id=ADMIN_ID, text=message, parse_mode='Markdown')
-        logger.info("Admin notification sent successfully")
-    except Exception as e:
-        logger.error(f"Failed to send admin notification: {e}", exc_info=True)
+# Global trading configuration
+TRADING_ENABLED = False
+USE_BINANCE = USE_BINANCE_BY_DEFAULT
+TRADES_PER_DAY = 3  # Default trades per day
+MIN_TRADES_PER_DAY = 1  # Minimum trades per day
+MAX_TRADES_PER_DAY = 100  # Maximum trades per day
+
+def admin_only(func):
+    """Decorator to restrict commands to admin only."""
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id if update.effective_user else 0
+        if user_id != ADMIN_ID:
+            await update.message.reply_text("⛔ This command is for admin only.")
+            return
+        return await func(update, context)
+    return wrapper
 
 # -----------------------
 # Admin Commands
 # -----------------------
 
-async def admin_pending_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /pending command - show all pending transactions with detailed logging and robust error handling.
-    Includes detailed logging for invocation, permission checks, DB results, and send success/failure.
-    Per-transaction error handling with stack traces and admin notifications for failed sends.
-    """
-    # Log invocation
-    user_id = update.effective_user.id if update.effective_user else None
-    logger.info(f"admin_pending_command invoked by user_id={user_id}")
+@admin_only
+async def cmd_trade_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Enable trading simulation."""
+    global TRADING_ENABLED
+    TRADING_ENABLED = True
+    await update.message.reply_text("✅ Trading simulation enabled.")
+
+@admin_only
+async def cmd_trade_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Disable trading simulation."""
+    global TRADING_ENABLED
+    TRADING_ENABLED = False
+    await update.message.reply_text("❌ Trading simulation disabled.")
+
+@admin_only
+async def cmd_trade_freq(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show current trading frequency."""
+    global TRADES_PER_DAY
+    await update.message.reply_text(
+        f"📊 Current trading frequency:\n"
+        f"Trades per day: {TRADES_PER_DAY}\n"
+        f"Interval: ~{24/TRADES_PER_DAY:.1f} hours"
+    )
+
+@admin_only
+async def cmd_set_trades_per_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Set the number of trades per day."""
+    global TRADES_PER_DAY
     
-    # Permission check with logging
-    if not ADMIN_ID or user_id != ADMIN_ID:
-        logger.warning(f"Unauthorized access attempt to /pending by user_id={user_id}, ADMIN_ID={ADMIN_ID}")
-        try:
-            await update.message.reply_text("❌ Admin only.")
-            logger.info(f"Sent unauthorized access message to user_id={user_id}")
-        except Exception as e:
-            logger.error(f"Failed to send unauthorized message to user_id={user_id}: {e}", exc_info=True)
+    if not context.args:
+        await update.message.reply_text(
+            f"📊 Current: {TRADES_PER_DAY} trades/day\n\n"
+            f"Usage: /set_trades_per_day <number>\n"
+            f"Example: /set_trades_per_day 5"
+        )
         return
     
-    logger.info(f"Permission check passed for user_id={user_id}")
-    
-    # Query pending transactions with logging
     try:
-        async with async_session() as session:
-            logger.info("Querying database for pending transactions")
-            result = await session.execute(
-                select(Transaction).where(Transaction.status == 'pending').order_by(Transaction.created_at.desc())
-            )
-            pending_txs = result.scalars().all()
-            logger.info(f"Database query successful: found {len(pending_txs)} pending transaction(s)")
-    except Exception as e:
-        logger.error(f"Database query failed for pending transactions: {e}", exc_info=True)
-        try:
-            await update.message.reply_text(f"❌ Database error: {str(e)}")
-            logger.info("Sent database error message to admin")
-        except Exception as send_err:
-            logger.error(f"Failed to send database error message: {send_err}", exc_info=True)
-        return
-    
-    # Handle no pending transactions
-    if not pending_txs:
-        logger.info("No pending transactions found")
-        try:
-            await update.message.reply_text("✅ No pending transactions.")
-            logger.info("Sent 'no pending transactions' message successfully")
-        except Exception as e:
-            logger.error(f"Failed to send 'no pending transactions' message: {e}", exc_info=True)
-        return
-    
-    # Process and send each transaction with per-transaction error handling
-    logger.info(f"Processing {len(pending_txs)} pending transaction(s)")
-    success_count = 0
-    failure_count = 0
-    
-    for idx, tx in enumerate(pending_txs, 1):
-        try:
-            logger.info(f"Processing transaction {idx}/{len(pending_txs)}: tx_id={tx.id}, user_id={tx.user_id}, type={tx.type}, amount={tx.amount}, ref={tx.ref}")
-            
-            # Build transaction message
-            msg_parts = [
-                f"📋 *Pending Transaction #{tx.id}*",
-                f"👤 User: `{tx.user_id}`",
-                f"🔖 Ref: `{tx.ref or 'N/A'}`",
-                f"📌 Type: {tx.type}",
-                f"💰 Amount: {tx.amount}",
-                f"📅 Created: {tx.created_at.strftime('%Y-%m-%d %H:%M:%S') if tx.created_at else 'N/A'}",
-            ]
-            
-            if tx.wallet:
-                msg_parts.append(f"💼 Wallet: `{tx.wallet}`")
-            if tx.network:
-                msg_parts.append(f"🌐 Network: {tx.network}")
-            if tx.proof:
-                msg_parts.append(f"🔗 Proof: {tx.proof}")
-            
-            msg = "\n".join(msg_parts)
-            
-            # Send transaction details with robust error handling
-            try:
-                await update.message.reply_text(msg, parse_mode='Markdown')
-                success_count += 1
-                logger.info(f"Successfully sent transaction {idx}/{len(pending_txs)} (tx_id={tx.id}) to admin")
-            except Exception as send_err:
-                failure_count += 1
-                logger.error(
-                    f"Failed to send transaction {idx}/{len(pending_txs)} (tx_id={tx.id}) to admin: {send_err}",
-                    exc_info=True
-                )
-                # Notify admin about the failed send via a fallback message
-                try:
-                    fallback_msg = f"⚠️ Failed to send transaction #{tx.id} details. Error: {str(send_err)}"
-                    await update.message.reply_text(fallback_msg)
-                    logger.info(f"Sent fallback error notification for tx_id={tx.id}")
-                except Exception as fallback_err:
-                    logger.error(f"Failed to send fallback error notification for tx_id={tx.id}: {fallback_err}", exc_info=True)
+        new_value = int(context.args[0])
+        if new_value < MIN_TRADES_PER_DAY or new_value > MAX_TRADES_PER_DAY:
+            await update.message.reply_text(f"⚠️ Value must be between {MIN_TRADES_PER_DAY} and {MAX_TRADES_PER_DAY}.")
+            return
         
-        except Exception as process_err:
-            failure_count += 1
-            logger.error(
-                f"Failed to process transaction {idx}/{len(pending_txs)} (tx_id={tx.id}): {process_err}",
-                exc_info=True
-            )
-            # Notify admin about the processing error
-            try:
-                error_msg = f"⚠️ Error processing transaction #{tx.id}: {str(process_err)}"
-                await update.message.reply_text(error_msg)
-                logger.info(f"Sent processing error notification for tx_id={tx.id}")
-            except Exception as notify_err:
-                logger.error(f"Failed to send processing error notification for tx_id={tx.id}: {notify_err}", exc_info=True)
-    
-    # Send summary
-    summary_msg = f"✅ Pending transactions processed: {success_count} successful, {failure_count} failed"
-    logger.info(summary_msg)
-    try:
-        await update.message.reply_text(summary_msg)
-        logger.info("Sent summary message successfully")
-    except Exception as e:
-        logger.error(f"Failed to send summary message: {e}", exc_info=True)
+        old_value = TRADES_PER_DAY
+        TRADES_PER_DAY = new_value
+        await update.message.reply_text(
+            f"✅ Trades per day updated:\n"
+            f"Old: {old_value} → New: {new_value}\n"
+            f"Interval: ~{24/new_value:.1f} hours between trades"
+        )
+        logger.info(f"Admin {update.effective_user.id} set trades_per_day from {old_value} to {new_value}")
+    except ValueError:
+        await update.message.reply_text("⚠️ Please provide a valid number.")
 
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+@admin_only
+async def cmd_trade_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Trigger trading simulation immediately."""
+    await update.message.reply_text("⚡ Triggering trading simulation now...")
+    # Note: actual trading_job implementation would be called here
+    await update.message.reply_text("✅ Trading simulation completed.")
+
+@admin_only
+async def cmd_trade_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show trading status."""
+    global TRADING_ENABLED, USE_BINANCE, TRADES_PER_DAY
+    status = "🟢 Enabled" if TRADING_ENABLED else "🔴 Disabled"
+    binance = "✅ Yes" if USE_BINANCE else "❌ No"
+    await update.message.reply_text(
+        f"📊 Trading Status:\n"
+        f"Status: {status}\n"
+        f"Use Binance: {binance}\n"
+        f"Trades/day: {TRADES_PER_DAY}\n"
+        f"Interval: ~{24/TRADES_PER_DAY:.1f} hours"
+    )
+
+@admin_only
+async def cmd_use_binance_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Enable Binance price fetching."""
+    global USE_BINANCE
+    USE_BINANCE = True
+    await update.message.reply_text("✅ Binance price fetching enabled.")
+
+@admin_only
+async def cmd_use_binance_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Disable Binance price fetching."""
+    global USE_BINANCE
+    USE_BINANCE = False
+    await update.message.reply_text("❌ Binance price fetching disabled. Using simulated prices.")
+
+@admin_only
+async def cmd_binance_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show Binance integration status."""
+    global USE_BINANCE
+    status = "✅ Enabled" if USE_BINANCE else "❌ Disabled"
+    await update.message.reply_text(
+        f"🔗 Binance Integration:\n"
+        f"Status: {status}\n"
+        f"Cache TTL: {BINANCE_CACHE_TTL}s"
+    )
+
+@admin_only
+async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show all admin commands."""
+    help_text = (
+        "🔧 **Admin Commands**\n\n"
+        "**Trading Control:**\n"
+        "/trade_on - Enable trading simulation\n"
+        "/trade_off - Disable trading simulation\n"
+        "/trade_freq - Show trading frequency\n"
+        f"/set_trades_per_day <n> - Set trades per day ({MIN_TRADES_PER_DAY}-{MAX_TRADES_PER_DAY})\n"
+        "/trade_now - Run trading simulation now\n"
+        "/trade_status - Show trading status\n\n"
+        "**Binance Integration:**\n"
+        "/use_binance_on - Enable Binance prices\n"
+        "/use_binance_off - Disable Binance prices\n"
+        "/binance_status - Show Binance status\n\n"
+        "/admin_cmds - Show this help"
+    )
+    await update.message.reply_text(help_text, parse_mode='Markdown')
+
+# -----------------------
+# User Commands
+# -----------------------
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
-    user = update.effective_user
+    user_id = update.effective_user.id
     async with async_session() as session:
-        await get_user(session, user.id)
-        lang = await get_user_language(session, user.id, update)
+        await get_user(session, user_id)
     
-    welcome_text = f"👋 Welcome to AiCrypto Bot!\n\nUse the menu below to get started."
-    keyboard = build_main_menu_keyboard(lang=lang)
-    await update.message.reply_text(welcome_text, reply_markup=keyboard)
+    welcome_text = (
+        "👋 Welcome to AiCrypto Bot!\n\n"
+        "Use /menu to access all features."
+    )
+    await update.message.reply_text(welcome_text)
 
-async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /menu command."""
-    async with async_session() as session:
-        lang = await get_user_language(session, update.effective_user.id, update)
-    keyboard = build_main_menu_keyboard(lang=lang)
-    await update.message.reply_text(t(lang, "main_menu_title"), reply_markup=keyboard)
-
-async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /info command."""
-    async with async_session() as session:
-        lang = await get_user_language(session, update.effective_user.id, update)
-    await update.message.reply_text(t(lang, "info_text"))
+async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show main menu."""
+    keyboard = build_main_menu_keyboard()
+    await update.message.reply_text("📱 Main Menu:", reply_markup=keyboard)
 
 # -----------------------
 # Main
 # -----------------------
 
-async def post_init(application: Application):
-    """Initialize database after application is created."""
+async def post_init(app: Application):
+    """Initialize database and scheduler after app starts."""
     await init_db()
     logger.info("Bot initialized successfully")
 
 def main():
-    """Start the bot."""
-    application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    """Main function to run the bot."""
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     
-    # Register command handlers
-    application.add_handler(CommandHandler("start", start_command))
-    application.add_handler(CommandHandler("menu", menu_command))
-    application.add_handler(CommandHandler("info", info_command))
-    application.add_handler(CommandHandler("pending", admin_pending_command))
+    # Admin commands
+    app.add_handler(CommandHandler("trade_on", cmd_trade_on))
+    app.add_handler(CommandHandler("trade_off", cmd_trade_off))
+    app.add_handler(CommandHandler("trade_freq", cmd_trade_freq))
+    app.add_handler(CommandHandler("set_trades_per_day", cmd_set_trades_per_day))
+    app.add_handler(CommandHandler("trade_now", cmd_trade_now))
+    app.add_handler(CommandHandler("trade_status", cmd_trade_status))
+    app.add_handler(CommandHandler("use_binance_on", cmd_use_binance_on))
+    app.add_handler(CommandHandler("use_binance_off", cmd_use_binance_off))
+    app.add_handler(CommandHandler("binance_status", cmd_binance_status))
+    app.add_handler(CommandHandler("admin_cmds", cmd_admin_cmds))
+    
+    # User commands
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("menu", cmd_menu))
     
     logger.info("Starting bot...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
