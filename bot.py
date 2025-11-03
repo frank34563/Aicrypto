@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 from decimal import Decimal, ROUND_HALF_UP
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.jobstores.base import JobLookupError
 from telegram import (
     Update,
     InlineKeyboardMarkup,
@@ -479,6 +480,9 @@ def pick_random_pair() -> str:
 # Trading control
 TRADING_ENABLED = True
 TRADING_FREQ_MINUTES = 10
+TRADES_PER_DAY = 144  # Default: 144 trades per day (every 10 minutes)
+MINUTES_PER_DAY = 24 * 60  # 1440 minutes in a day
+TRADING_JOB_ID = 'trading_job_scheduled'
 _trading_job = None
 
 # -----------------------
@@ -514,7 +518,7 @@ async def trading_job():
                 buy_rate = format_price(buy_rate_raw, decimals=12)
                 sell_rate = format_price(sell_rate_raw, decimals=12)
                 # expected daily slice
-                runs_per_day = max(1.0, (24*60) / TRADING_FREQ_MINUTES)
+                runs_per_day = max(1.0, TRADES_PER_DAY)
                 daily_rate = 0.015
                 base = bal * daily_rate / runs_per_day
                 profit = round(base * random.uniform(0.3, 1.8), 6)
@@ -1133,7 +1137,61 @@ async def cmd_trade_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _is_admin(user_id):
         await update.effective_message.reply_text("Forbidden: admin only.")
         return
-    await update.effective_message.reply_text(f"Trading: {'ENABLED' if TRADING_ENABLED else 'DISABLED'}\nFrequency: {TRADING_FREQ_MINUTES} minutes\nSimulated pairs: {', '.join(PRICE_PAIRS.keys())}")
+    await update.effective_message.reply_text(f"Trading: {'ENABLED' if TRADING_ENABLED else 'DISABLED'}\nFrequency: {TRADING_FREQ_MINUTES} minutes\nTrades per day: {TRADES_PER_DAY}\nSimulated pairs: {', '.join(PRICE_PAIRS.keys())}")
+
+async def cmd_set_trades_per_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text("Usage: /set_trades_per_day <number> (positive integer, e.g., 144 for every 10 minutes)")
+        return
+    
+    try:
+        trades_per_day = int(args[0])
+    except ValueError:
+        await update.effective_message.reply_text("Invalid number. Usage: /set_trades_per_day <number> (positive integer)")
+        return
+    
+    if trades_per_day <= 0:
+        await update.effective_message.reply_text("Trades per day must be a positive integer.")
+        return
+    
+    # Calculate frequency in minutes (use round for accuracy)
+    freq_minutes = max(1, round(MINUTES_PER_DAY / trades_per_day))
+    
+    global TRADES_PER_DAY, TRADING_FREQ_MINUTES
+    TRADES_PER_DAY = trades_per_day
+    TRADING_FREQ_MINUTES = freq_minutes
+    
+    # Reschedule the trading job
+    global _scheduler
+    if _scheduler:
+        # Remove existing trading job by ID
+        try:
+            _scheduler.remove_job(TRADING_JOB_ID)
+            logger.info("Removed existing trading job with id: %s", TRADING_JOB_ID)
+        except JobLookupError:
+            logger.info("Trading job does not exist yet, will create new one")
+        
+        # Add new job with updated frequency and explicit ID
+        _scheduler.add_job(
+            trading_job, 
+            'interval', 
+            minutes=freq_minutes, 
+            id=TRADING_JOB_ID,
+            next_run_time=datetime.utcnow() + timedelta(seconds=5)
+        )
+        logger.info("Rescheduled trading job with frequency: %d minutes (trades per day: %d)", freq_minutes, trades_per_day)
+    
+    await update.effective_message.reply_text(
+        f"✅ Trades per day set to {trades_per_day}.\n"
+        f"Trading frequency: {freq_minutes} minutes.\n"
+        f"Changes applied immediately."
+    )
+    await post_admin_log(context.bot, f"Admin set trades per day to {trades_per_day} (frequency: {freq_minutes} minutes).")
 
 # -----------------------
 # HISTORY handlers (unchanged)
@@ -1509,6 +1567,7 @@ def main():
     application.add_handler(CommandHandler("trade_freq", cmd_trade_freq))
     application.add_handler(CommandHandler("trade_now", cmd_trade_now))
     application.add_handler(CommandHandler("trade_status", cmd_trade_status))
+    application.add_handler(CommandHandler("set_trades_per_day", cmd_set_trades_per_day))
 
     application.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
@@ -1521,7 +1580,13 @@ def main():
     # daily profit
     _scheduler.add_job(daily_profit_job, 'cron', hour=0, minute=0)
     # SCHEDULE trading_job directly as coroutine — not via lambda
-    _scheduler.add_job(trading_job, 'interval', minutes=TRADING_FREQ_MINUTES, next_run_time=datetime.utcnow() + timedelta(seconds=15))
+    _scheduler.add_job(
+        trading_job, 
+        'interval', 
+        minutes=TRADING_FREQ_MINUTES, 
+        id=TRADING_JOB_ID,
+        next_run_time=datetime.utcnow() + timedelta(seconds=15)
+    )
     _scheduler.start()
 
     logger.info("AiCrypto Bot STARTED")
