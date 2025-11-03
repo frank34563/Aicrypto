@@ -5,7 +5,7 @@
 # - Admin notification flow with approve/reject and "Commands" button
 # - Trading simulation job that fetches Binance prices via httpx.AsyncClient by default with TTL cache and falls back to simulated prices
 # - Price formatting to avoid scientific notation (fixed-point)
-# - Admin commands: /trade_on, /trade_off, /trade_freq, /set_trades_per_day, /trade_now, /trade_status, /use_binance_on, /use_binance_off, /binance_status, /admin_cmds
+# - Admin commands: /trade_on, /trade_off, /trade_freq, /trade_now, /trade_status, /use_binance_on, /use_binance_off, /binance_status, /admin_cmds
 # - Scheduler with APScheduler to run trading_job and daily_profit_job
 #
 # Requirements: python-telegram-bot >= 20, sqlalchemy, aiosqlite, apscheduler, httpx, python-dotenv
@@ -311,202 +311,798 @@ def is_probable_wallet(address: str) -> bool:
     return False
 
 # -----------------------
+# Global trading configuration (stored in context.bot_data)
+# -----------------------
+TRADING_DEFAULTS = {
+    'daily_payout_percent': 1.5,      # Default daily profit percentage
+    'trades_per_day': 10,              # Default number of trades per day
+    'percent_per_trade': 0.15,         # Default percentage per trade (1.5% / 10 = 0.15%)
+    'trading_enabled': False,          # Trading on/off
+    'use_binance': USE_BINANCE_BY_DEFAULT,  # Use real Binance prices
+}
+
+# Price cache with TTL
+price_cache: Dict[str, tuple] = {}  # {symbol: (price, timestamp)}
+
+# -----------------------
+# Binance price fetching with httpx
+# -----------------------
+async def fetch_binance_price(symbol: str) -> Optional[float]:
+    """Fetch real-time price from Binance API using httpx."""
+    try:
+        now = datetime.now(timezone.utc)
+        if symbol in price_cache:
+            price, timestamp = price_cache[symbol]
+            if (now - timestamp).total_seconds() < BINANCE_CACHE_TTL:
+                return price
+        
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
+            response = await client.get(url)
+            response.raise_for_status()
+            data = response.json()
+            price = float(data['price'])
+            price_cache[symbol] = (price, now)
+            return price
+    except Exception as e:
+        logger.warning("Failed to fetch Binance price for %s: %s", symbol, e)
+        return None
+
+def generate_simulated_price(symbol: str, base_price: float) -> float:
+    """Generate a simulated price with small random variation."""
+    variation = random.uniform(-0.02, 0.02)  # ±2% variation
+    return base_price * (1 + variation)
+
+# Simulated base prices for common pairs
+SIMULATED_PRICES = {
+    'BTCUSDT': 45000.0,
+    'ETHUSDT': 2500.0,
+    'BNBUSDT': 300.0,
+    'XRPUSDT': 0.5,
+    'ADAUSDT': 0.4,
+    'SOLUSDT': 100.0,
+    'DOGEUSDT': 0.08,
+    'DOTUSDT': 6.0,
+    'MATICUSDT': 0.8,
+    'LTCUSDT': 70.0,
+}
+
+async def get_crypto_price(symbol: str, use_binance: bool = True) -> float:
+    """Get crypto price from Binance or simulated."""
+    if use_binance:
+        price = await fetch_binance_price(symbol)
+        if price is not None:
+            return price
+        logger.info("Binance fetch failed for %s, falling back to simulation", symbol)
+    
+    base_price = SIMULATED_PRICES.get(symbol, 100.0)
+    return generate_simulated_price(symbol, base_price)
+
+# -----------------------
 # Admin / tx helpers
 # -----------------------
+def is_admin(user_id: int) -> bool:
+    return user_id == ADMIN_ID
 
-# Global trading configuration
-TRADING_ENABLED = False
-USE_BINANCE = USE_BINANCE_BY_DEFAULT
-TRADES_PER_DAY = 3  # Default trades per day
-MIN_TRADES_PER_DAY = 1  # Minimum trades per day
-MAX_TRADES_PER_DAY = 100  # Maximum trades per day
+async def notify_admin(context: ContextTypes.DEFAULT_TYPE, message: str, reply_markup=None):
+    """Send notification to admin."""
+    if not ADMIN_ID or ADMIN_ID == 0:
+        return
+    try:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=message, reply_markup=reply_markup, parse_mode='HTML')
+    except Exception as e:
+        logger.error("Failed to notify admin: %s", e)
 
-def admin_only(func):
-    """Decorator to restrict commands to admin only."""
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        user_id = update.effective_user.id if update.effective_user else 0
-        if user_id != ADMIN_ID:
-            await update.message.reply_text("⛔ This command is for admin only.")
-            return
-        return await func(update, context)
-    return wrapper
+def format_price(price: float, decimals: int = 8) -> str:
+    """Format price to avoid scientific notation."""
+    d = Decimal(str(price))
+    quantize_str = '0.' + '0' * decimals
+    formatted = d.quantize(Decimal(quantize_str), rounding=ROUND_HALF_UP)
+    return f"{formatted:.{decimals}f}".rstrip('0').rstrip('.')
 
 # -----------------------
-# Admin Commands
+# Trading simulation job
 # -----------------------
-
-@admin_only
-async def cmd_trade_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Enable trading simulation."""
-    global TRADING_ENABLED
-    TRADING_ENABLED = True
-    await update.message.reply_text("✅ Trading simulation enabled.")
-
-@admin_only
-async def cmd_trade_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Disable trading simulation."""
-    global TRADING_ENABLED
-    TRADING_ENABLED = False
-    await update.message.reply_text("❌ Trading simulation disabled.")
-
-@admin_only
-async def cmd_trade_freq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show current trading frequency."""
-    global TRADES_PER_DAY
-    await update.message.reply_text(
-        f"📊 Current trading frequency:\n"
-        f"Trades per day: {TRADES_PER_DAY}\n"
-        f"Interval: ~{24/TRADES_PER_DAY:.1f} hours"
-    )
-
-@admin_only
-async def cmd_set_trades_per_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Set the number of trades per day."""
-    global TRADES_PER_DAY
+async def execute_single_trade(session: AsyncSession, user_id: int, balance: Decimal, 
+                               trade_percent: float, crypto_pairs: List[str], use_binance: bool) -> Decimal:
+    """Execute a single simulated trade for a user."""
+    if balance <= 0:
+        return Decimal('0')
     
-    if not context.args:
+    # Select random crypto pair
+    pair = random.choice(crypto_pairs) if crypto_pairs else 'BTCUSDT'
+    
+    # Get price
+    price = await get_crypto_price(pair, use_binance)
+    
+    # Calculate profit/loss (random outcome with profit bias)
+    outcome = random.uniform(-0.3, 1.0)  # Range gives ~77% profit probability
+    profit_multiplier = Decimal(str(outcome * trade_percent / 100))
+    trade_profit = balance * profit_multiplier
+    
+    # Log trade transaction
+    await log_transaction(
+        session,
+        user_id=user_id,
+        type='trade',
+        amount=float(trade_profit),
+        status='completed',
+        proof=f"{pair}@{format_price(price)}",
+        wallet=None,
+        network=None
+    )
+    
+    return trade_profit
+
+async def trading_job(context: ContextTypes.DEFAULT_TYPE):
+    """Execute trading simulation for all users."""
+    try:
+        config = context.bot_data.get('trading_config', TRADING_DEFAULTS.copy())
+        
+        if not config.get('trading_enabled', False):
+            logger.info("Trading is disabled, skipping job")
+            return
+        
+        trades_per_day = config.get('trades_per_day', 10)
+        percent_per_trade = config.get('percent_per_trade', 0.15)
+        use_binance = config.get('use_binance', True)
+        
+        async with async_session() as session:
+            # Get all users with balance
+            result = await session.execute(
+                select(User).where(User.balance > 0)
+            )
+            users = result.scalars().all()
+            
+            for user in users:
+                # Check if user has custom settings
+                user_config = context.bot_data.get(f'user_config_{user.id}', {})
+                user_pairs = user_config.get('crypto_pairs', ['BTCUSDT', 'ETHUSDT', 'BNBUSDT'])
+                user_percent = user_config.get('percent_per_trade', percent_per_trade)
+                
+                # Execute trade
+                trade_profit = await execute_single_trade(
+                    session, user.id, user.balance, user_percent, user_pairs, use_binance
+                )
+                
+                # Update user balance and daily profit
+                new_balance = user.balance + trade_profit
+                new_daily_profit = user.daily_profit + trade_profit
+                new_total_profit = user.total_profit + trade_profit
+                
+                await update_user(
+                    session,
+                    user.id,
+                    balance=float(new_balance),
+                    daily_profit=float(new_daily_profit),
+                    total_profit=float(new_total_profit)
+                )
+                
+                logger.info("Trade executed for user %d: profit=%s, new_balance=%s", 
+                           user.id, trade_profit, new_balance)
+        
+        logger.info("Trading job completed successfully")
+    except Exception as e:
+        logger.exception("Error in trading job: %s", e)
+
+async def daily_profit_job(context: ContextTypes.DEFAULT_TYPE):
+    """Reset daily profit at end of day and send summaries."""
+    try:
+        async with async_session() as session:
+            # Get all users
+            result = await session.execute(select(User))
+            users = result.scalars().all()
+            
+            for user in users:
+                if user.daily_profit != 0:
+                    # Send end-of-day summary to user
+                    try:
+                        profit_percent = (float(user.daily_profit) / float(user.balance) * 100) if user.balance > 0 else 0
+                        summary = (
+                            f"📊 <b>End of Day Trading Summary</b>\n\n"
+                            f"💰 Daily Profit: ${format_price(float(user.daily_profit), 2)}\n"
+                            f"📈 Profit Percent: {format_price(profit_percent, 2)}%\n"
+                            f"💵 Total Balance: ${format_price(float(user.balance), 2)}\n"
+                            f"🎯 Total All-Time Profit: ${format_price(float(user.total_profit), 2)}"
+                        )
+                        await context.bot.send_message(chat_id=user.id, text=summary, parse_mode='HTML')
+                    except Exception as e:
+                        logger.warning("Failed to send summary to user %d: %s", user.id, e)
+                    
+                    # Reset daily profit
+                    await update_user(session, user.id, daily_profit=0.0)
+        
+        logger.info("Daily profit reset completed")
+    except Exception as e:
+        logger.exception("Error in daily profit job: %s", e)
+
+# -----------------------
+# Command handlers
+# -----------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /start command."""
+    user = update.effective_user
+    async with async_session() as session:
+        await get_user(session, user.id)
+        lang = await get_user_language(session, user.id, update)
+    
+    welcome = (
+        f"👋 Welcome to <b>AiCrypto Trading Bot</b>!\n\n"
+        f"🤖 I help you trade cryptocurrencies automatically.\n\n"
+        f"Use /menu to access all features."
+    )
+    await update.message.reply_html(welcome)
+
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show main menu."""
+    async with async_session() as session:
+        lang = await get_user_language(session, update.effective_user.id, update)
+    
+    keyboard = build_main_menu_keyboard(lang=lang)
+    text = t(lang, "main_menu_title")
+    
+    if update.message:
+        await update.message.reply_text(text, reply_markup=keyboard)
+    elif update.callback_query:
+        await update.callback_query.edit_message_text(text, reply_markup=keyboard)
+
+async def balance_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show balance information."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    async with async_session() as session:
+        user_data = await get_user(session, user_id)
+    
+    text = (
+        f"💰 <b>Your Balance</b>\n\n"
+        f"Available: ${format_price(float(user_data['balance']), 2)}\n"
+        f"In Process: ${format_price(float(user_data['balance_in_process']), 2)}\n"
+        f"Today's Profit: ${format_price(float(user_data['daily_profit']), 2)}\n"
+        f"Total Profit: ${format_price(float(user_data['total_profit']), 2)}"
+    )
+    
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="menu_back")]])
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
+
+async def referrals_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show referral information."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    async with async_session() as session:
+        user_data = await get_user(session, user_id)
+    
+    ref_link = f"https://t.me/{context.bot.username}?start={user_id}"
+    text = (
+        f"👥 <b>Referral Program</b>\n\n"
+        f"Your referrals: {user_data['referral_count']}\n"
+        f"Earnings: ${format_price(float(user_data['referral_earnings']), 2)}\n\n"
+        f"🔗 Your link:\n<code>{ref_link}</code>"
+    )
+    
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="menu_back")]])
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
+
+async def info_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show information."""
+    query = update.callback_query
+    await query.answer()
+    
+    async with async_session() as session:
+        lang = await get_user_language(session, query.from_user.id, update)
+    
+    text = t(lang, "info_text")
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="menu_back")]])
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
+
+async def menu_exit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Exit menu."""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("👋 Menu closed. Use /menu to open again.")
+
+async def invest_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show invest instructions."""
+    query = update.callback_query
+    await query.answer()
+    
+    text = (
+        f"📈 <b>Investment Instructions</b>\n\n"
+        f"1. Send USDT to the wallet below\n"
+        f"2. Send us the transaction ID (TXID)\n"
+        f"3. Wait for admin approval\n\n"
+        f"💳 <b>Wallet Address:</b>\n"
+        f"<code>{MASTER_WALLET}</code>\n\n"
+        f"🌐 <b>Network:</b> {MASTER_NETWORK}\n\n"
+        f"📝 After sending, use /invest command to submit your proof."
+    )
+    
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="menu_back")]])
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
+
+async def withdraw_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show withdraw instructions."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    async with async_session() as session:
+        user_data = await get_user(session, user_id)
+    
+    text = (
+        f"💸 <b>Withdrawal</b>\n\n"
+        f"Available Balance: ${format_price(float(user_data['balance']), 2)}\n\n"
+        f"To withdraw, use the /withdraw command.\n"
+        f"Admin will review and process your request."
+    )
+    
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="menu_back")]])
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
+
+async def history_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show transaction history."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    async with async_session() as session:
+        result = await session.execute(
+            select(Transaction).where(Transaction.user_id == user_id).order_by(Transaction.created_at.desc()).limit(10)
+        )
+        transactions = result.scalars().all()
+    
+    if not transactions:
+        text = "🧾 <b>Transaction History</b>\n\nNo transactions yet."
+    else:
+        text = "🧾 <b>Transaction History</b>\n\n"
+        for tx in transactions:
+            status_emoji = {"pending": "⏳", "completed": "✅", "credited": "✅", "rejected": "❌"}.get(tx.status, "❓")
+            text += f"{status_emoji} {tx.type.upper()} - ${format_price(float(tx.amount), 2)} ({tx.status})\n"
+    
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("« Back", callback_data="menu_back")]])
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
+
+async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show settings menu."""
+    query = update.callback_query
+    await query.answer()
+    
+    async with async_session() as session:
+        lang = await get_user_language(session, query.from_user.id, update)
+    
+    text = t(lang, "settings_title") + "\n\n" + t(lang, "settings_wallet")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton(t(lang, "change_language"), callback_data="settings_language")],
+        [InlineKeyboardButton("« Back", callback_data="menu_back")]
+    ])
+    await query.edit_message_text(text, reply_markup=keyboard, parse_mode='HTML')
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle menu callbacks."""
+    query = update.callback_query
+    data = query.data
+    
+    if data == "menu_back":
+        await menu(update, context)
+    elif data == "menu_balance":
+        await balance_menu(update, context)
+    elif data == "menu_invest":
+        await invest_menu(update, context)
+    elif data == "menu_withdraw":
+        await withdraw_menu(update, context)
+    elif data == "menu_history":
+        await history_menu(update, context)
+    elif data == "menu_settings":
+        await settings_menu(update, context)
+    elif data == "menu_referrals":
+        await referrals_menu(update, context)
+    elif data == "menu_info":
+        await info_menu(update, context)
+    elif data == "menu_exit":
+        await menu_exit(update, context)
+    elif data == "settings_language":
+        await query.answer("Language settings coming soon!")
+        await settings_menu(update, context)
+
+# -----------------------
+# Admin commands
+# -----------------------
+async def admin_set_daily_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to set daily payout percentage."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("Usage: /set_daily_payout <percentage>\nExample: /set_daily_payout 2.0")
+        return
+    
+    try:
+        payout = float(context.args[0])
+        if payout < 0 or payout > 100:
+            await update.message.reply_text("❌ Percentage must be between 0 and 100")
+            return
+        
+        config = context.bot_data.get('trading_config', TRADING_DEFAULTS.copy())
+        config['daily_payout_percent'] = payout
+        context.bot_data['trading_config'] = config
+        
+        await update.message.reply_text(f"✅ Daily payout set to {payout}%")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid number")
+
+async def admin_set_trades_per_day(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to set number of trades per day."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("Usage: /set_trades_per_day <number>\nExample: /set_trades_per_day 20")
+        return
+    
+    try:
+        trades = int(context.args[0])
+        if trades < 1 or trades > 1000:
+            await update.message.reply_text("❌ Number must be between 1 and 1000")
+            return
+        
+        config = context.bot_data.get('trading_config', TRADING_DEFAULTS.copy())
+        config['trades_per_day'] = trades
+        # Recalculate percent per trade
+        daily_payout = config.get('daily_payout_percent', 1.5)
+        config['percent_per_trade'] = daily_payout / trades
+        context.bot_data['trading_config'] = config
+        
         await update.message.reply_text(
-            f"📊 Current: {TRADES_PER_DAY} trades/day\n\n"
-            f"Usage: /set_trades_per_day <number>\n"
-            f"Example: /set_trades_per_day 5"
+            f"✅ Trades per day set to {trades}\n"
+            f"📊 Percent per trade: {config['percent_per_trade']:.4f}%"
+        )
+    except ValueError:
+        await update.message.reply_text("❌ Invalid number")
+
+async def admin_set_percent_per_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to set percentage per trade globally."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("Usage: /set_percent_per_trade <percentage>\nExample: /set_percent_per_trade 0.25")
+        return
+    
+    try:
+        percent = float(context.args[0])
+        if percent < 0 or percent > 10:
+            await update.message.reply_text("❌ Percentage must be between 0 and 10")
+            return
+        
+        config = context.bot_data.get('trading_config', TRADING_DEFAULTS.copy())
+        config['percent_per_trade'] = percent
+        context.bot_data['trading_config'] = config
+        
+        await update.message.reply_text(f"✅ Percent per trade set to {percent}%")
+    except ValueError:
+        await update.message.reply_text("❌ Invalid number")
+
+async def admin_assign_user_pairs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to assign crypto pairs to a user."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text(
+            "Usage: /assign_pairs <user_id> <pair1> <pair2> ...\n"
+            "Example: /assign_pairs 12345 BTCUSDT ETHUSDT BNBUSDT"
         )
         return
     
     try:
-        new_value = int(context.args[0])
-        if new_value < MIN_TRADES_PER_DAY or new_value > MAX_TRADES_PER_DAY:
-            await update.message.reply_text(f"⚠️ Value must be between {MIN_TRADES_PER_DAY} and {MAX_TRADES_PER_DAY}.")
+        user_id = int(context.args[0])
+        pairs = [p.upper() for p in context.args[1:]]
+        
+        user_config = context.bot_data.get(f'user_config_{user_id}', {})
+        user_config['crypto_pairs'] = pairs
+        context.bot_data[f'user_config_{user_id}'] = user_config
+        
+        await update.message.reply_text(
+            f"✅ Assigned pairs to user {user_id}:\n" + 
+            "\n".join(f"• {pair}" for pair in pairs)
+        )
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID")
+
+async def admin_assign_user_percent(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to assign per-trade percentage to a user."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    if not context.args or len(context.args) != 2:
+        await update.message.reply_text(
+            "Usage: /assign_percent <user_id> <percentage>\n"
+            "Example: /assign_percent 12345 0.25"
+        )
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        percent = float(context.args[1])
+        
+        if percent < 0 or percent > 10:
+            await update.message.reply_text("❌ Percentage must be between 0 and 10")
             return
         
-        old_value = TRADES_PER_DAY
-        TRADES_PER_DAY = new_value
-        await update.message.reply_text(
-            f"✅ Trades per day updated:\n"
-            f"Old: {old_value} → New: {new_value}\n"
-            f"Interval: ~{24/new_value:.1f} hours between trades"
-        )
-        logger.info(f"Admin {update.effective_user.id} set trades_per_day from {old_value} to {new_value}")
+        user_config = context.bot_data.get(f'user_config_{user_id}', {})
+        user_config['percent_per_trade'] = percent
+        context.bot_data[f'user_config_{user_id}'] = user_config
+        
+        await update.message.reply_text(f"✅ User {user_id} percent per trade set to {percent}%")
     except ValueError:
-        await update.message.reply_text("⚠️ Please provide a valid number.")
+        await update.message.reply_text("❌ Invalid user ID or percentage")
 
-@admin_only
-async def cmd_trade_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Trigger trading simulation immediately."""
-    await update.message.reply_text("⚡ Triggering trading simulation now...")
-    # Note: actual trading_job implementation would be called here
-    await update.message.reply_text("✅ Trading simulation completed.")
-
-@admin_only
-async def cmd_trade_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show trading status."""
-    global TRADING_ENABLED, USE_BINANCE, TRADES_PER_DAY
-    status = "🟢 Enabled" if TRADING_ENABLED else "🔴 Disabled"
-    binance = "✅ Yes" if USE_BINANCE else "❌ No"
-    await update.message.reply_text(
-        f"📊 Trading Status:\n"
-        f"Status: {status}\n"
-        f"Use Binance: {binance}\n"
-        f"Trades/day: {TRADES_PER_DAY}\n"
-        f"Interval: ~{24/TRADES_PER_DAY:.1f} hours"
-    )
-
-@admin_only
-async def cmd_use_binance_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Enable Binance price fetching."""
-    global USE_BINANCE
-    USE_BINANCE = True
-    await update.message.reply_text("✅ Binance price fetching enabled.")
-
-@admin_only
-async def cmd_use_binance_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Disable Binance price fetching."""
-    global USE_BINANCE
-    USE_BINANCE = False
-    await update.message.reply_text("❌ Binance price fetching disabled. Using simulated prices.")
-
-@admin_only
-async def cmd_binance_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show Binance integration status."""
-    global USE_BINANCE
-    status = "✅ Enabled" if USE_BINANCE else "❌ Disabled"
-    await update.message.reply_text(
-        f"🔗 Binance Integration:\n"
-        f"Status: {status}\n"
-        f"Cache TTL: {BINANCE_CACHE_TTL}s"
-    )
-
-@admin_only
-async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show all admin commands."""
-    help_text = (
-        "🔧 **Admin Commands**\n\n"
-        "**Trading Control:**\n"
-        "/trade_on - Enable trading simulation\n"
-        "/trade_off - Disable trading simulation\n"
-        "/trade_freq - Show trading frequency\n"
-        f"/set_trades_per_day <n> - Set trades per day ({MIN_TRADES_PER_DAY}-{MAX_TRADES_PER_DAY})\n"
-        "/trade_now - Run trading simulation now\n"
-        "/trade_status - Show trading status\n\n"
-        "**Binance Integration:**\n"
-        "/use_binance_on - Enable Binance prices\n"
-        "/use_binance_off - Disable Binance prices\n"
-        "/binance_status - Show Binance status\n\n"
-        "/admin_cmds - Show this help"
-    )
-    await update.message.reply_text(help_text, parse_mode='Markdown')
-
-# -----------------------
-# User Commands
-# -----------------------
-
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /start command."""
-    user_id = update.effective_user.id
-    async with async_session() as session:
-        await get_user(session, user_id)
+async def admin_trading_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to show trading day statistics."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
     
-    welcome_text = (
-        "👋 Welcome to AiCrypto Bot!\n\n"
-        "Use /menu to access all features."
+    async with async_session() as session:
+        # Get all users with activity
+        result = await session.execute(select(User))
+        users = result.scalars().all()
+        
+        total_users = len(users)
+        active_users = sum(1 for u in users if u.balance > 0)
+        total_balance = sum(float(u.balance) for u in users)
+        total_daily_profit = sum(float(u.daily_profit) for u in users)
+        total_all_time_profit = sum(float(u.total_profit) for u in users)
+        
+        # Get today's trade count
+        today = datetime.now(timezone.utc).date()
+        trade_result = await session.execute(
+            select(Transaction).where(
+                Transaction.type == 'trade',
+                Transaction.created_at >= datetime.combine(today, datetime.min.time())
+            )
+        )
+        trades_today = len(trade_result.scalars().all())
+        
+        config = context.bot_data.get('trading_config', TRADING_DEFAULTS.copy())
+        
+        summary = (
+            f"📊 <b>Trading Day Summary</b>\n\n"
+            f"👥 Total Users: {total_users}\n"
+            f"✅ Active Traders: {active_users}\n"
+            f"💰 Total Balance: ${format_price(total_balance, 2)}\n"
+            f"📈 Today's Profit: ${format_price(total_daily_profit, 2)}\n"
+            f"🎯 All-Time Profit: ${format_price(total_all_time_profit, 2)}\n"
+            f"🔄 Trades Today: {trades_today}\n\n"
+            f"<b>Current Settings:</b>\n"
+            f"• Trading: {'ON' if config.get('trading_enabled') else 'OFF'}\n"
+            f"• Daily Payout: {config.get('daily_payout_percent', 1.5)}%\n"
+            f"• Trades/Day: {config.get('trades_per_day', 10)}\n"
+            f"• Percent/Trade: {config.get('percent_per_trade', 0.15):.4f}%\n"
+            f"• Binance: {'ON' if config.get('use_binance') else 'OFF'}"
+        )
+        
+        await update.message.reply_text(summary, parse_mode='HTML')
+
+async def trade_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to enable trading."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    config = context.bot_data.get('trading_config', TRADING_DEFAULTS.copy())
+    config['trading_enabled'] = True
+    context.bot_data['trading_config'] = config
+    
+    await update.message.reply_text("✅ Trading enabled")
+
+async def trade_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to disable trading."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    config = context.bot_data.get('trading_config', TRADING_DEFAULTS.copy())
+    config['trading_enabled'] = False
+    context.bot_data['trading_config'] = config
+    
+    await update.message.reply_text("🛑 Trading disabled")
+
+async def trade_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to show trading status."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    config = context.bot_data.get('trading_config', TRADING_DEFAULTS.copy())
+    
+    status = (
+        f"📊 <b>Trading Status</b>\n\n"
+        f"Status: {'🟢 ON' if config.get('trading_enabled') else '🔴 OFF'}\n"
+        f"Daily Payout: {config.get('daily_payout_percent', 1.5)}%\n"
+        f"Trades/Day: {config.get('trades_per_day', 10)}\n"
+        f"Percent/Trade: {config.get('percent_per_trade', 0.15):.4f}%\n"
+        f"Binance: {'ON' if config.get('use_binance') else 'OFF'}"
     )
-    await update.message.reply_text(welcome_text)
+    
+    await update.message.reply_text(status, parse_mode='HTML')
 
-async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show main menu."""
-    keyboard = build_main_menu_keyboard()
-    await update.message.reply_text("📱 Main Menu:", reply_markup=keyboard)
+async def use_binance_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to enable Binance price fetching."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    config = context.bot_data.get('trading_config', TRADING_DEFAULTS.copy())
+    config['use_binance'] = True
+    context.bot_data['trading_config'] = config
+    
+    await update.message.reply_text("✅ Binance price fetching enabled")
+
+async def use_binance_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to disable Binance price fetching."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    config = context.bot_data.get('trading_config', TRADING_DEFAULTS.copy())
+    config['use_binance'] = False
+    context.bot_data['trading_config'] = config
+    
+    await update.message.reply_text("🛑 Binance price fetching disabled (using simulation)")
+
+async def admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Show all admin commands."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    commands = """
+📋 <b>Admin Commands</b>
+
+<b>Trading Configuration:</b>
+/set_daily_payout &lt;%&gt; - Set daily profit percentage
+/set_trades_per_day &lt;n&gt; - Set number of trades per day
+/set_percent_per_trade &lt;%&gt; - Set percent per trade
+/trade_on - Enable trading
+/trade_off - Disable trading
+/trade_status - Show trading status
+
+<b>User Management:</b>
+/assign_pairs &lt;user_id&gt; &lt;pairs&gt; - Assign crypto pairs to user
+/assign_percent &lt;user_id&gt; &lt;%&gt; - Assign percent per trade to user
+
+<b>Reports:</b>
+/trading_summary - Show trading day statistics
+/user_summary &lt;user_id&gt; - Show user trading summary
+
+<b>Binance:</b>
+/use_binance_on - Enable Binance prices
+/use_binance_off - Disable Binance prices
+
+<b>Other:</b>
+/admin_cmds - Show this help
+"""
+    await update.message.reply_text(commands, parse_mode='HTML')
+
+async def user_summary(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command to show user trading summary."""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Admin only.")
+        return
+    
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("Usage: /user_summary <user_id>")
+        return
+    
+    try:
+        user_id = int(context.args[0])
+        
+        async with async_session() as session:
+            user_data = await get_user(session, user_id)
+            
+            # Get user's custom config
+            user_config = context.bot_data.get(f'user_config_{user_id}', {})
+            pairs = user_config.get('crypto_pairs', ['Default'])
+            percent = user_config.get('percent_per_trade', 'Default')
+            
+            summary = (
+                f"📊 <b>User {user_id} Summary</b>\n\n"
+                f"💰 Balance: ${format_price(float(user_data['balance']), 2)}\n"
+                f"📈 Daily Profit: ${format_price(float(user_data['daily_profit']), 2)}\n"
+                f"🎯 Total Profit: ${format_price(float(user_data['total_profit']), 2)}\n"
+                f"👥 Referrals: {user_data['referral_count']}\n\n"
+                f"<b>Custom Settings:</b>\n"
+                f"• Crypto Pairs: {', '.join(pairs) if isinstance(pairs, list) else pairs}\n"
+                f"• Percent/Trade: {percent if isinstance(percent, str) else f'{percent:.4f}%'}"
+            )
+            
+            await update.message.reply_text(summary, parse_mode='HTML')
+    except ValueError:
+        await update.message.reply_text("❌ Invalid user ID")
 
 # -----------------------
-# Main
+# Main function
 # -----------------------
-
-async def post_init(app: Application):
-    """Initialize database and scheduler after app starts."""
+async def post_init(application: Application):
+    """Initialize bot data and scheduler."""
+    # Initialize trading config
+    if 'trading_config' not in application.bot_data:
+        application.bot_data['trading_config'] = TRADING_DEFAULTS.copy()
+    
+    # Initialize database
     await init_db()
-    logger.info("Bot initialized successfully")
+    
+    # Setup scheduler
+    scheduler = AsyncIOScheduler(timezone='UTC')
+    
+    # Schedule trading job
+    config = application.bot_data.get('trading_config', TRADING_DEFAULTS.copy())
+    trades_per_day = config.get('trades_per_day', 10)
+    
+    # Calculate interval between trades (in minutes)
+    interval_minutes = (24 * 60) // trades_per_day
+    
+    scheduler.add_job(
+        trading_job,
+        'interval',
+        minutes=interval_minutes,
+        args=[application],
+        id='trading_job'
+    )
+    
+    # Schedule daily profit reset at midnight UTC
+    scheduler.add_job(
+        daily_profit_job,
+        'cron',
+        hour=0,
+        minute=0,
+        args=[application],
+        id='daily_profit_job'
+    )
+    
+    scheduler.start()
+    application.bot_data['scheduler'] = scheduler
+    
+    logger.info("Bot initialized. Trading interval: %d minutes", interval_minutes)
 
 def main():
-    """Main function to run the bot."""
-    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    """Start the bot."""
+    application = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
+    
+    # Command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("menu", menu))
     
     # Admin commands
-    app.add_handler(CommandHandler("trade_on", cmd_trade_on))
-    app.add_handler(CommandHandler("trade_off", cmd_trade_off))
-    app.add_handler(CommandHandler("trade_freq", cmd_trade_freq))
-    app.add_handler(CommandHandler("set_trades_per_day", cmd_set_trades_per_day))
-    app.add_handler(CommandHandler("trade_now", cmd_trade_now))
-    app.add_handler(CommandHandler("trade_status", cmd_trade_status))
-    app.add_handler(CommandHandler("use_binance_on", cmd_use_binance_on))
-    app.add_handler(CommandHandler("use_binance_off", cmd_use_binance_off))
-    app.add_handler(CommandHandler("binance_status", cmd_binance_status))
-    app.add_handler(CommandHandler("admin_cmds", cmd_admin_cmds))
+    application.add_handler(CommandHandler("set_daily_payout", admin_set_daily_payout))
+    application.add_handler(CommandHandler("set_trades_per_day", admin_set_trades_per_day))
+    application.add_handler(CommandHandler("set_percent_per_trade", admin_set_percent_per_trade))
+    application.add_handler(CommandHandler("assign_pairs", admin_assign_user_pairs))
+    application.add_handler(CommandHandler("assign_percent", admin_assign_user_percent))
+    application.add_handler(CommandHandler("trading_summary", admin_trading_summary))
+    application.add_handler(CommandHandler("user_summary", user_summary))
+    application.add_handler(CommandHandler("trade_on", trade_on))
+    application.add_handler(CommandHandler("trade_off", trade_off))
+    application.add_handler(CommandHandler("trade_status", trade_status))
+    application.add_handler(CommandHandler("use_binance_on", use_binance_on))
+    application.add_handler(CommandHandler("use_binance_off", use_binance_off))
+    application.add_handler(CommandHandler("admin_cmds", admin_cmds))
     
-    # User commands
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("menu", cmd_menu))
+    # Menu callbacks
+    application.add_handler(CallbackQueryHandler(menu_callback))
     
+    # Start bot
     logger.info("Starting bot...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()
