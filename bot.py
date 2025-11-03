@@ -149,6 +149,14 @@ class DailySummary(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Config(Base):
+    __tablename__ = 'config'
+    key = Column(String, primary_key=True)
+    value = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 # DB init helpers
 async def _create_all_with_timeout(engine_to_use):
     async with engine_to_use.begin() as conn:
@@ -253,6 +261,25 @@ async def set_user_trade_config(session: AsyncSession, user_id: int, pair: str, 
         config.percent_per_trade = percent_per_trade
     else:
         config = UserTradeConfig(user_id=user_id, pair=pair, percent_per_trade=percent_per_trade)
+        session.add(config)
+    await session.commit()
+
+# Config helpers for range management
+async def get_config(session: AsyncSession, key: str, default: Optional[str] = None) -> Optional[str]:
+    """Get config value by key"""
+    result = await session.execute(select(Config).where(Config.key == key))
+    config = result.scalar_one_or_none()
+    return config.value if config else default
+
+async def set_config(session: AsyncSession, key: str, value: str):
+    """Set config value by key"""
+    result = await session.execute(select(Config).where(Config.key == key))
+    config = result.scalar_one_or_none()
+    if config:
+        config.value = value
+        config.updated_at = datetime.utcnow()
+    else:
+        config = Config(key=key, value=value)
         session.add(config)
     await session.commit()
 
@@ -588,6 +615,10 @@ async def trading_job():
     now = datetime.utcnow()
     logger.info("trading_job: starting run at %s", now.isoformat())
     async with async_session() as session:
+        # Get configured ranges from Config
+        trade_min = float(await get_config(session, 'trade_range_min', '0.05'))
+        trade_max = float(await get_config(session, 'trade_range_max', '0.25'))
+        
         result = await session.execute(select(User))
         users = result.scalars().all()
         if not users:
@@ -610,6 +641,9 @@ async def trading_job():
                     # Use global config with random pair
                     pair = random.choice(['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'LTCUSDT'])
                     percent_per_trade = GLOBAL_TRADE_PERCENT
+                
+                # Enforce trade range limits
+                percent_per_trade = max(trade_min, min(trade_max, percent_per_trade))
                 
                 # Try to fetch Binance price, fallback to simulated
                 live_price = await fetch_binance_price(pair)
@@ -1599,6 +1633,112 @@ async def cmd_binance_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     await update.effective_message.reply_text(status_text)
 
+async def cmd_set_daily_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /set_daily_range <min> <max> - Set allowed daily percent range (e.g., 1.25 1.5)"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    args = context.args
+    if len(args) < 2:
+        await update.effective_message.reply_text(
+            "Usage: /set_daily_range <min> <max>\n"
+            "Example: /set_daily_range 1.25 1.5\n"
+            "Sets the allowed daily percent range."
+        )
+        return
+    
+    try:
+        min_percent = float(args[0])
+        max_percent = float(args[1])
+    except ValueError:
+        await update.effective_message.reply_text("Invalid numbers. Usage: /set_daily_range <min> <max>")
+        return
+    
+    # Validate bounds: daily must be 1.25% - 1.5%
+    ALLOWED_DAILY_MIN = 1.25
+    ALLOWED_DAILY_MAX = 1.5
+    
+    if min_percent < ALLOWED_DAILY_MIN or min_percent > ALLOWED_DAILY_MAX:
+        await update.effective_message.reply_text(
+            f"❌ Min daily percent must be between {ALLOWED_DAILY_MIN}% and {ALLOWED_DAILY_MAX}%"
+        )
+        return
+    
+    if max_percent < ALLOWED_DAILY_MIN or max_percent > ALLOWED_DAILY_MAX:
+        await update.effective_message.reply_text(
+            f"❌ Max daily percent must be between {ALLOWED_DAILY_MIN}% and {ALLOWED_DAILY_MAX}%"
+        )
+        return
+    
+    if min_percent > max_percent:
+        await update.effective_message.reply_text("❌ Min percent cannot be greater than max percent")
+        return
+    
+    # Store in Config
+    async with async_session() as session:
+        await set_config(session, 'daily_range_min', str(min_percent))
+        await set_config(session, 'daily_range_max', str(max_percent))
+    
+    await update.effective_message.reply_text(
+        f"✅ Daily percent range set to {min_percent}% - {max_percent}%"
+    )
+    await post_admin_log(context.bot, f"Admin set daily range to {min_percent}% - {max_percent}%")
+
+async def cmd_set_trade_range(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /set_trade_range <min> <max> - Set allowed per-trade percent range (e.g., 0.05 0.25)"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    args = context.args
+    if len(args) < 2:
+        await update.effective_message.reply_text(
+            "Usage: /set_trade_range <min> <max>\n"
+            "Example: /set_trade_range 0.05 0.25\n"
+            "Sets the allowed per-trade percent range."
+        )
+        return
+    
+    try:
+        min_percent = float(args[0])
+        max_percent = float(args[1])
+    except ValueError:
+        await update.effective_message.reply_text("Invalid numbers. Usage: /set_trade_range <min> <max>")
+        return
+    
+    # Validate bounds: trade must be 0.05% - 0.25%
+    ALLOWED_TRADE_MIN = 0.05
+    ALLOWED_TRADE_MAX = 0.25
+    
+    if min_percent < ALLOWED_TRADE_MIN or min_percent > ALLOWED_TRADE_MAX:
+        await update.effective_message.reply_text(
+            f"❌ Min trade percent must be between {ALLOWED_TRADE_MIN}% and {ALLOWED_TRADE_MAX}%"
+        )
+        return
+    
+    if max_percent < ALLOWED_TRADE_MIN or max_percent > ALLOWED_TRADE_MAX:
+        await update.effective_message.reply_text(
+            f"❌ Max trade percent must be between {ALLOWED_TRADE_MIN}% and {ALLOWED_TRADE_MAX}%"
+        )
+        return
+    
+    if min_percent > max_percent:
+        await update.effective_message.reply_text("❌ Min percent cannot be greater than max percent")
+        return
+    
+    # Store in Config
+    async with async_session() as session:
+        await set_config(session, 'trade_range_min', str(min_percent))
+        await set_config(session, 'trade_range_max', str(max_percent))
+    
+    await update.effective_message.reply_text(
+        f"✅ Per-trade percent range set to {min_percent}% - {max_percent}%"
+    )
+    await post_admin_log(context.bot, f"Admin set trade range to {min_percent}% - {max_percent}%")
+
 async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /admin_cmds - Show all admin commands"""
     user_id = update.effective_user.id
@@ -1622,6 +1762,8 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/set_trades_per_day <num> - Set trades per day\n"
         "/set_daily_percent <percent> - Set daily profit target\n"
         "/set_trade_percent <percent> - Set trade percent\n"
+        "/set_daily_range <min> <max> - Set daily percent range (1.25-1.5%)\n"
+        "/set_trade_range <min> <max> - Set trade percent range (0.05-0.25%)\n"
         "/set_user_trade <user_id> <pair> <percent> - Set user config\n"
         "/trading_status - Show trading config\n"
         "/trading_summary [date] - View daily summary\n\n"
@@ -2009,6 +2151,8 @@ def main():
     application.add_handler(CommandHandler("set_trades_per_day", cmd_set_trades_per_day))
     application.add_handler(CommandHandler("set_daily_percent", cmd_set_daily_percent))
     application.add_handler(CommandHandler("set_trade_percent", cmd_set_trade_percent))
+    application.add_handler(CommandHandler("set_daily_range", cmd_set_daily_range))
+    application.add_handler(CommandHandler("set_trade_range", cmd_set_trade_range))
     application.add_handler(CommandHandler("set_user_trade", cmd_set_user_trade))
     application.add_handler(CommandHandler("trading_status", cmd_trading_status))
     application.add_handler(CommandHandler("trading_summary", cmd_trading_summary))
