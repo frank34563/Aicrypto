@@ -615,6 +615,8 @@ async def trading_job():
         # Get configured ranges from Config
         trade_min = float(await get_config(session, 'trade_range_min', '0.05'))
         trade_max = float(await get_config(session, 'trade_range_max', '0.25'))
+        daily_min = float(await get_config(session, 'daily_range_min', '1.25'))
+        daily_max = float(await get_config(session, 'daily_range_max', '1.5'))
         
         result = await session.execute(select(User))
         users = result.scalars().all()
@@ -629,18 +631,37 @@ async def trading_job():
                 if random.random() < 0.5:  # 50% chance to trade
                     continue
                 
+                # Calculate daily profit percentage so far
+                daily_profit_so_far = float(user.daily_profit or 0.0)
+                starting_balance = bal - daily_profit_so_far
+                if starting_balance <= 0:
+                    starting_balance = bal
+                current_daily_percent = (daily_profit_so_far / starting_balance) * 100 if starting_balance > 0 else 0
+                
+                # Generate random daily target if not exceeded
+                daily_target_percent = random.uniform(daily_min, daily_max)
+                if current_daily_percent >= daily_target_percent:
+                    logger.debug(f"User {user.id} already reached daily target: {current_daily_percent:.2f}% >= {daily_target_percent:.2f}%")
+                    continue
+                
                 # Get per-user config or use global
                 user_config = await get_user_trade_config(session, user.id)
                 if user_config:
                     pair = user_config['pair']
-                    percent_per_trade = user_config['percent_per_trade']
                 else:
-                    # Use global config with random pair
+                    # Use random pair
                     pair = random.choice(['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'LTCUSDT'])
-                    percent_per_trade = GLOBAL_TRADE_PERCENT
                 
-                # Enforce trade range limits
-                percent_per_trade = max(trade_min, min(trade_max, percent_per_trade))
+                # Generate random percent_per_trade within allowed range
+                percent_per_trade = random.uniform(trade_min, trade_max)
+                
+                # Ensure we don't exceed daily limit
+                remaining_daily_percent = daily_target_percent - current_daily_percent
+                if percent_per_trade > remaining_daily_percent:
+                    percent_per_trade = remaining_daily_percent
+                
+                if percent_per_trade <= 0:
+                    continue
                 
                 # Try to fetch Binance price, fallback to simulated
                 live_price = await fetch_binance_price(pair)
