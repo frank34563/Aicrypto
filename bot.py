@@ -976,14 +976,58 @@ async def trading_job():
                     quote_asset = pair[3:]
                 trading_pair_str = f"{quote_asset} → {base_asset} → {quote_asset}"
                 
+                # Get user language for translated message
+                lang = user.preferred_language or 'en'
+                
+                # Trading alert translations
+                trade_alerts = {
+                    'en': {
+                        'title': '📢 AI trade was executed',
+                        'date': 'Date',
+                        'pair': 'Trading pair',
+                        'buy': 'Buy rate',
+                        'sell': 'Sell rate',
+                        'profit': 'Profit',
+                        'balance': 'Balance'
+                    },
+                    'fr': {
+                        'title': '📢 Transaction IA exécutée',
+                        'date': 'Date',
+                        'pair': 'Paire de trading',
+                        'buy': 'Taux d\'achat',
+                        'sell': 'Taux de vente',
+                        'profit': 'Profit',
+                        'balance': 'Solde'
+                    },
+                    'es': {
+                        'title': '📢 Operación IA ejecutada',
+                        'date': 'Fecha',
+                        'pair': 'Par de trading',
+                        'buy': 'Tasa de compra',
+                        'sell': 'Tasa de venta',
+                        'profit': 'Ganancia',
+                        'balance': 'Saldo'
+                    },
+                    'ar': {
+                        'title': '📢 تم تنفيذ صفقة الذكاء الاصطناعي',
+                        'date': 'التاريخ',
+                        'pair': 'زوج التداول',
+                        'buy': 'سعر الشراء',
+                        'sell': 'سعر البيع',
+                        'profit': 'الربح',
+                        'balance': 'الرصيد'
+                    }
+                }
+                
+                t = trade_alerts.get(lang, trade_alerts['en'])
                 trade_text = (
-                    "📢 AI trade was executed\n\n"
-                    f"📅 Date: {date_str}\n"
-                    f"💱 Trading pair: {trading_pair_str}\n"
-                    f"📈 Buy rate: {buy_rate}\n"
-                    f"📉 Sell rate: {sell_rate}\n"
-                    f"📊 Profit: {profit_percent}%\n"
-                    f"💰Balance: {display_balance} USDT"
+                    f"{t['title']}\n\n"
+                    f"📅 {t['date']}: {date_str}\n"
+                    f"💱 {t['pair']}: {trading_pair_str}\n"
+                    f"📈 {t['buy']}: {buy_rate}\n"
+                    f"📉 {t['sell']}: {sell_rate}\n"
+                    f"📊 {t['profit']}: {profit_percent}%\n"
+                    f"💰{t['balance']}: {display_balance} USDT"
                 )
                 try:
                     await application.bot.send_message(chat_id=user.id, text=trade_text)
@@ -1033,12 +1077,43 @@ async def daily_summary_job():
                 )
                 session.add(summary)
                 
-                # Send message to user
+                # Get user language for translated message
+                lang = user.preferred_language or 'en'
+                
+                # Daily summary translations
+                summary_translations = {
+                    'en': {
+                        'title': '📊 Trading work for today is completed.',
+                        'total_profit': '💹 Total profit amounted to',
+                        'profit_amount': '💰 Profit amount',
+                        'total_balance': '📈 Total balance'
+                    },
+                    'fr': {
+                        'title': '📊 Le travail de trading d\'aujourd\'hui est terminé.',
+                        'total_profit': '💹 Le profit total s\'élève à',
+                        'profit_amount': '💰 Montant du profit',
+                        'total_balance': '📈 Solde total'
+                    },
+                    'es': {
+                        'title': '📊 El trabajo de trading de hoy se ha completado.',
+                        'total_profit': '💹 La ganancia total ascendió a',
+                        'profit_amount': '💰 Monto de ganancia',
+                        'total_balance': '📈 Saldo total'
+                    },
+                    'ar': {
+                        'title': '📊 اكتمل عمل التداول لهذا اليوم.',
+                        'total_profit': '💹 بلغ إجمالي الربح',
+                        'profit_amount': '💰 مبلغ الربح',
+                        'total_balance': '📈 الرصيد الإجمالي'
+                    }
+                }
+                
+                t = summary_translations.get(lang, summary_translations['en'])
                 summary_text = (
-                    "📊 Trading work for today is completed.\n"
-                    f"💹 Total profit amounted to {daily_percent:.2f}%\n"
-                    f"💰 Profit amount: {daily_profit:.2f} USDT\n"
-                    f"📈 Total balance: {balance:.2f} USDT"
+                    f"{t['title']}\n"
+                    f"{t['total_profit']} {daily_percent:.2f}%\n"
+                    f"{t['profit_amount']}: {daily_profit:.2f} USDT\n"
+                    f"{t['total_balance']}: {balance:.2f} USDT"
                 )
                 
                 try:
