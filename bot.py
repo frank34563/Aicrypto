@@ -341,6 +341,7 @@ TRANSLATIONS = {
         "lang_en": "🇬🇧 English",
         "lang_fr": "🇫🇷 Français",
         "lang_es": "🇪🇸 Español",
+        "lang_ar": "🇸🇦 العربية",
         "lang_set_success": "✅ Language updated to {lang}",
         "lang_current": "Current language: {lang}",
         "info_text": (
@@ -368,6 +369,7 @@ TRANSLATIONS = {
         "lang_en": "🇬🇧 Anglais",
         "lang_fr": "🇫🇷 Français",
         "lang_es": "🇪🇸 Espagnol",
+        "lang_ar": "🇸🇦 العربية",
         "lang_set_success": "✅ Langue mise à jour en {lang}",
         "lang_current": "Langue actuelle : {lang}",
         "info_text": (
@@ -395,6 +397,7 @@ TRANSLATIONS = {
         "lang_en": "🇬🇧 Inglés",
         "lang_fr": "🇫🇷 Francés",
         "lang_es": "🇪🇸 Español",
+        "lang_ar": "🇸🇦 العربية",
         "lang_set_success": "✅ Idioma actualizado a {lang}",
         "lang_current": "Idioma actual: {lang}",
         "info_text": (
@@ -411,11 +414,39 @@ TRANSLATIONS = {
             "📊 <b>Actualizaciones en tiempo real</b>\n\n"
             "¿Necesitas ayuda? ¡Contacta soporte!"
         ),
+    },
+    "ar": {
+        "main_menu_title": "📋 القائمة الرئيسية",
+        "settings_title": "⚙️ الإعدادات",
+        "settings_language": "🌍 اللغة",
+        "change_language": "تغيير اللغة",
+        "settings_wallet": "💳 تعيين/تحديث محفظة السحب",
+        "lang_auto": "🔄 تلقائي (من تيليجرام)",
+        "lang_en": "🇬🇧 الإنجليزية",
+        "lang_fr": "🇫🇷 الفرنسية",
+        "lang_es": "🇪🇸 الإسبانية",
+        "lang_ar": "🇸🇦 العربية",
+        "lang_set_success": "✅ تم تحديث اللغة إلى {lang}",
+        "lang_current": "اللغة الحالية: {lang}",
+        "info_text": (
+            "ℹ️ <b>مرحباً بك في AiCrypto Bot</b>\n\n"
+            "🤖 <b>منصة تداول مدعومة بالذكاء الاصطناعي</b>\n"
+            "يقوم نظام الذكاء الاصطناعي المتقدم لدينا بتداول العملات المشفرة على مدار الساعة لتنمية استثمارك.\n\n"
+            "📈 <b>كيف تبدأ:</b>\n"
+            "1️⃣ <b>استثمر</b> - أودع USDT في المحفظة المقدمة\n"
+            "2️⃣ <b>ارفع الإثبات</b> - شارك معرف المعاملة أو لقطة الشاشة\n"
+            "3️⃣ <b>شاهد النمو</b> - الذكاء الاصطناعي يتداول تلقائياً للأرباح اليومية\n"
+            "4️⃣ <b>اسحب</b> - اطلب السحب في أي وقت\n\n"
+            "💹 <b>العوائد اليومية:</b> 1.25% - 1.5%\n"
+            "🔒 <b>آمن وتلقائي</b>\n"
+            "📊 <b>تحديثات فورية</b>\n\n"
+            "تحتاج مساعدة؟ اتصل بالدعم في أي وقت!"
+        ),
     }
 }
 DEFAULT_LANG = "en"
-SUPPORTED_LANGS = ["en", "fr", "es"]
-LANG_DISPLAY = {"en":"English","fr":"Français","es":"Español"}
+SUPPORTED_LANGS = ["en", "fr", "es", "ar"]
+LANG_DISPLAY = {"en":"English","fr":"Français","es":"Español","ar":"العربية"}
 
 def t(lang: str, key: str, **kwargs) -> str:
     bundle = TRANSLATIONS.get(lang, TRANSLATIONS[DEFAULT_LANG])
@@ -982,7 +1013,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 lang = await get_user_language(session, query.from_user.id, update=update)
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🌍 " + t(lang,"change_language"), callback_data="settings_language")],
-                [InlineKeyboardButton("💳 " + t(lang,"settings_wallet"), callback_data="settings_set_wallet")],
+                [InlineKeyboardButton(t(lang,"settings_wallet"), callback_data="settings_set_wallet")],
                 [InlineKeyboardButton("« Back to Menu", callback_data="menu_exit")]
             ])
             await query.edit_message_text(
