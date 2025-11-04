@@ -1,11 +1,13 @@
-# Full bot.py — final patched version with:
-# - menu-handler ordering fix (admin/specific callbacks registered before generic menu handler)
-# - trading_job scheduled directly and checks TRADING_ENABLED
-# - trading_job uses simulated live prices and updates user balances
-# - buy/sell rates formatted with fixed-point decimal (no scientific notation) using format_price (Option A)
-# - admin callbacks improved with logging and permission checks
-# - admin notifications include Telegram username
-# - start, invest, withdraw flows, history, settings, and other features preserved
+# Full bot.py — Latest trading features implementation with:
+# - httpx-based Binance price fetcher with TTL cache and simulated fallback price walk
+# - DB models: UserTradeConfig (per-user config), DailySummary (daily records), Config (key/value store)
+# - Admin commands: /set_trades_per_day, /set_daily_range, /set_trade_range, /set_user_trade, /trading_status, /trading_summary
+# - Enforced ranges: daily 1.25%-1.5%, per-trade 0.05%-0.25% with validation
+# - Trading engine: uses per-user config or global config, fetches live prices with cache, updates balances
+# - Daily summary job at 23:59 UTC: persists DailySummary, sends formatted summary to users
+# - Fixed-point decimal formatting (Decimal + format_price helpers)
+# - CallbackQueryHandler ordering: admin/history callbacks before generic menu handler
+# - Preserved: invest/withdraw/history/admin flows, admin_pending_command diagnostics
 #
 # Replace your existing bot.py with this file and restart the bot.
 
@@ -875,11 +877,8 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "menu_help":
-        help_text = ("/start - main menu\n/balance\n/invest\n/withdraw\n/wallet\n/history\n/history all (admin)\n/information\n/help\n\n"
-                     "Admin trading commands:\n/trade_on\n/trade_off\n/trade_freq")
-        async with async_session() as session:
-            lang = await get_user_language(session, query.from_user.id, update=update)
-        await query.edit_message_text(help_text, reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+        help_button = InlineKeyboardMarkup([[InlineKeyboardButton("❓ Help", url=SUPPORT_URL)]])
+        await query.message.reply_text("Click the button below for help:", reply_markup=help_button)
         return
 
 # -----------------------
