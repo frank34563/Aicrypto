@@ -657,7 +657,8 @@ async def trading_job():
                 bal = float(user.balance or 0.0)
                 if bal <= 1.0:
                     continue
-                if random.random() < 0.5:  # 50% chance to trade
+                # 30% chance to skip (70% chance to trade per job run)
+                if random.random() < 0.3:
                     continue
                 
                 # Calculate daily profit percentage so far
@@ -1862,6 +1863,7 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/binance_status - Show Binance status\n\n"
         "**Configuration:**\n"
         "/set_trades_per_day <num> - Set trades per day\n"
+        "/set_negative_trades <num> - Set negative trades per day\n"
         "/set_daily_percent <percent> - Set daily profit target\n"
         "/set_trade_percent <percent> - Set trade percent\n"
         "/set_daily_range <min> <max> - Set daily percent range (1.25-1.5%)\n"
