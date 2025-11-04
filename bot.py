@@ -344,6 +344,13 @@ TRANSLATIONS = {
         "lang_ar": "🇸🇦 العربية",
         "lang_set_success": "✅ Language updated to {lang}",
         "lang_current": "Current language: {lang}",
+        "welcome_text": (
+            "🎉 <b>Welcome to AiCrypto Bot!</b>\n\n"
+            "🤖 Your Personal AI Trading Assistant\n"
+            "💹 Automated Crypto Trading 24/7\n"
+            "📊 Daily Profit: 1.25% - 1.5%\n\n"
+            "👇 Select an option below to get started"
+        ),
         "info_text": (
             "ℹ️ <b>Welcome to AiCrypto Bot</b>\n\n"
             "🤖 <b>AI-Powered Trading Platform</b>\n"
@@ -372,6 +379,13 @@ TRANSLATIONS = {
         "lang_ar": "🇸🇦 العربية",
         "lang_set_success": "✅ Langue mise à jour en {lang}",
         "lang_current": "Langue actuelle : {lang}",
+        "welcome_text": (
+            "🎉 <b>Bienvenue sur AiCrypto Bot!</b>\n\n"
+            "🤖 Votre Assistant de Trading IA Personnel\n"
+            "💹 Trading Crypto Automatisé 24/7\n"
+            "📊 Profit Quotidien: 1.25% - 1.5%\n\n"
+            "👇 Sélectionnez une option ci-dessous pour commencer"
+        ),
         "info_text": (
             "ℹ️ <b>Bienvenue sur AiCrypto Bot</b>\n\n"
             "🤖 <b>Plateforme de Trading IA</b>\n"
@@ -400,6 +414,13 @@ TRANSLATIONS = {
         "lang_ar": "🇸🇦 العربية",
         "lang_set_success": "✅ Idioma actualizado a {lang}",
         "lang_current": "Idioma actual: {lang}",
+        "welcome_text": (
+            "🎉 <b>¡Bienvenido a AiCrypto Bot!</b>\n\n"
+            "🤖 Tu Asistente de Trading IA Personal\n"
+            "💹 Trading Cripto Automatizado 24/7\n"
+            "📊 Ganancias Diarias: 1.25% - 1.5%\n\n"
+            "👇 Selecciona una opción a continuación para empezar"
+        ),
         "info_text": (
             "ℹ️ <b>Bienvenido a AiCrypto Bot</b>\n\n"
             "🤖 <b>Plataforma de Trading con IA</b>\n"
@@ -428,6 +449,13 @@ TRANSLATIONS = {
         "lang_ar": "🇸🇦 العربية",
         "lang_set_success": "✅ تم تحديث اللغة إلى {lang}",
         "lang_current": "اللغة الحالية: {lang}",
+        "welcome_text": (
+            "🎉 <b>مرحباً بك في AiCrypto Bot!</b>\n\n"
+            "🤖 مساعدك الشخصي للتداول بالذكاء الاصطناعي\n"
+            "💹 تداول العملات المشفرة تلقائياً 24/7\n"
+            "📊 الأرباح اليومية: 1.25% - 1.5%\n\n"
+            "👇 اختر خياراً أدناه للبدء"
+        ),
         "info_text": (
             "ℹ️ <b>مرحباً بك في AiCrypto Bot</b>\n\n"
             "🤖 <b>منصة تداول مدعومة بالذكاء الاصطناعي</b>\n"
@@ -2269,7 +2297,25 @@ async def language_callback_handler(update: Update, context: ContextTypes.DEFAUL
 
         effective_lang = await get_user_language(session, user_id, update=update)
 
-    await query.message.reply_text(t(effective_lang, "lang_set_success", lang=LANG_DISPLAY.get(effective_lang, effective_lang)))
+    # Show success message and redirect to main menu with translated text
+    success_msg = t(effective_lang, "lang_set_success", lang=LANG_DISPLAY.get(effective_lang, effective_lang))
+    welcome_text = t(effective_lang, "welcome_text")
+    
+    # Combine success message with translated main menu
+    full_text = success_msg + "\n\n" + welcome_text + "\n\n" + t(effective_lang, "main_menu_title")
+    
+    try:
+        await query.message.edit_text(
+            full_text,
+            reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=effective_lang),
+            parse_mode="HTML"
+        )
+    except Exception:
+        await query.message.reply_text(
+            full_text,
+            reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=effective_lang),
+            parse_mode="HTML"
+        )
 
 async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TYPE):
     if context and getattr(context, "user_data", None):
