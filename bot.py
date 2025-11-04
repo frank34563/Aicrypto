@@ -78,8 +78,8 @@ USE_BINANCE = True  # Can be toggled by admin commands
 # Global trading configuration (can be modified by admin commands)
 GLOBAL_DAILY_PERCENT = 1.375  # default 1.375% daily (mid-range between 1.25% and 1.5%)
 GLOBAL_TRADE_PERCENT = 0.15  # default 0.15% per trade (mid-range between 0.05% and 0.25%)
-GLOBAL_TRADES_PER_DAY = 32  # default 32 trades per day (45 minute frequency)
-GLOBAL_NEGATIVE_TRADES_PER_DAY = 5  # default 5 negative trades per day
+GLOBAL_TRADES_PER_DAY = 15  # default 15 trades per day (96 minute frequency)
+GLOBAL_NEGATIVE_TRADES_PER_DAY = 1  # default 1 negative trade per day
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
