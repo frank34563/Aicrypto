@@ -498,12 +498,22 @@ def tx_card_text(tx: Transaction, username: Optional[str] = None) -> str:
     user_line = f"User: <code>{tx.user_id}</code>"
     if username:
         user_line += f" (@{username})"
-    return (f"{emoji} <b>Ref {tx.ref}</b>\n"
-            f"Type: <b>{(tx.type or '').upper()}</b>\n"
-            f"Amount: <b>{float(tx.amount):.6f}$</b>\n"
-            f"{user_line}\n"
-            f"Status: <b>{(tx.status or '').upper()}</b>\n"
-            f"Created: {created}\n")
+    
+    base_text = (f"{emoji} <b>Ref {tx.ref}</b>\n"
+                 f"Type: <b>{(tx.type or '').upper()}</b>\n"
+                 f"Amount: <b>{float(tx.amount):.6f}$</b>\n"
+                 f"{user_line}\n"
+                 f"Status: <b>{(tx.status or '').upper()}</b>\n"
+                 f"Created: {created}\n")
+    
+    # For withdrawal transactions, include wallet and network for admin to copy
+    if tx.type == 'withdraw' and tx.wallet:
+        wallet_info = (f"\n💳 <b>Withdrawal Details:</b>\n"
+                      f"Wallet: <code>{tx.wallet}</code>\n"
+                      f"Network: <b>{tx.network or 'N/A'}</b>\n")
+        base_text += wallet_info
+    
+    return base_text
 
 def admin_action_kb(tx_db_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
