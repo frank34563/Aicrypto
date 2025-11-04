@@ -525,6 +525,27 @@ TRANSLATIONS = {
         "withdraw_wallet_saved": "✅ Wallet saved:\n<code>{wallet}</code>\nNetwork: {network}",
         "withdraw_missing_data": "Missing withdrawal data. Start withdraw again.",
         "withdraw_request_success": "🧾 Withdrawal Request Successful\nTransaction ID: W-{ref}\nAmount: {amount:.2f} USDT ({network})\nWallet: {wallet}\nNetwork: {network}\nStatus: Pending Approval\nDate: {date}\n\nOnce confirmed by admin, your withdrawal will be processed.",
+        # Referral translations
+        "referral_title": "👥 Referral Program",
+        "referral_intro": "Share your referral link and earn rewards!",
+        "referral_link_label": "🔗 Your Link:",
+        "referral_tap_to_copy": "👆 Tap the link above to copy it",
+        "referral_stats_title": "📊 Your Stats:",
+        "referral_total_count": "👤 Total Referrals: {count}",
+        "referral_earnings": "💰 Earnings: {earnings:.2f} USDT",
+        "referral_how_it_works": "💡 How it works:",
+        "referral_step1": "• Share your link with friends",
+        "referral_step2": "• Earn 2% commission on their first deposit",
+        "referral_step3": "• Earnings added to your balance instantly",
+        "referral_commission_info": "🎁 Get 2% of your friend's first deposit!",
+        # Wallet command
+        "wallet_saved": "Saved wallet:\n<code>{wallet}</code>\nNetwork: {network}",
+        "wallet_use_button": "Use this wallet for next withdrawal",
+        "wallet_not_saved": "No withdrawal wallet saved. Set it with /wallet <address> [network]",
+        "wallet_send_address": "Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).",
+        # Help command
+        "help_message": "Need assistance? Click below to chat with support:",
+        "help_button": "💬 Open Support Chat",
     },
     "fr": {
         "main_menu_title": "📋 Menu Principal",
@@ -590,6 +611,27 @@ TRANSLATIONS = {
         "withdraw_wallet_saved": "✅ Portefeuille enregistré:\n<code>{wallet}</code>\nRéseau: {network}",
         "withdraw_missing_data": "Données de retrait manquantes. Recommencez le retrait.",
         "withdraw_request_success": "🧾 Demande de Retrait Réussie\nID de transaction: W-{ref}\nMontant: {amount:.2f} USDT ({network})\nPortefeuille: {wallet}\nRéseau: {network}\nStatut: En attente d'approbation\nDate: {date}\n\nUne fois confirmé par l'admin, votre retrait sera traité.",
+        # Referral translations
+        "referral_title": "👥 Programme de Parrainage",
+        "referral_intro": "Partagez votre lien de parrainage et gagnez des récompenses!",
+        "referral_link_label": "🔗 Votre Lien:",
+        "referral_tap_to_copy": "👆 Appuyez sur le lien ci-dessus pour le copier",
+        "referral_stats_title": "📊 Vos Statistiques:",
+        "referral_total_count": "👤 Total Parrainages: {count}",
+        "referral_earnings": "💰 Gains: {earnings:.2f} USDT",
+        "referral_how_it_works": "💡 Comment ça marche:",
+        "referral_step1": "• Partagez votre lien avec vos amis",
+        "referral_step2": "• Gagnez 2% de commission sur leur premier dépôt",
+        "referral_step3": "• Gains ajoutés à votre solde instantanément",
+        "referral_commission_info": "🎁 Obtenez 2% du premier dépôt de votre ami!",
+        # Wallet command
+        "wallet_saved": "Portefeuille enregistré:\n<code>{wallet}</code>\nRéseau: {network}",
+        "wallet_use_button": "Utiliser ce portefeuille pour le prochain retrait",
+        "wallet_not_saved": "Aucun portefeuille de retrait enregistré. Configurez-le avec /wallet <adresse> [réseau]",
+        "wallet_send_address": "Envoyez l'adresse de votre portefeuille de retrait et le réseau facultatif (ex: 0xabc... ERC20).",
+        # Help command
+        "help_message": "Besoin d'aide? Cliquez ci-dessous pour discuter avec le support:",
+        "help_button": "💬 Ouvrir le Chat Support",
     },
     "es": {
         "main_menu_title": "📋 Menú Principal",
@@ -655,6 +697,27 @@ TRANSLATIONS = {
         "withdraw_wallet_saved": "✅ Billetera guardada:\n<code>{wallet}</code>\nRed: {network}",
         "withdraw_missing_data": "Datos de retiro faltantes. Comienza el retiro de nuevo.",
         "withdraw_request_success": "🧾 Solicitud de Retiro Exitosa\nID de transacción: W-{ref}\nMonto: {amount:.2f} USDT ({network})\nBilletera: {wallet}\nRed: {network}\nEstado: Pendiente de aprobación\nFecha: {date}\n\nUna vez confirmado por el admin, tu retiro será procesado.",
+        # Referral translations
+        "referral_title": "👥 Programa de Referidos",
+        "referral_intro": "¡Comparte tu enlace de referido y gana recompensas!",
+        "referral_link_label": "🔗 Tu Enlace:",
+        "referral_tap_to_copy": "👆 Toca el enlace arriba para copiarlo",
+        "referral_stats_title": "📊 Tus Estadísticas:",
+        "referral_total_count": "👤 Total Referidos: {count}",
+        "referral_earnings": "💰 Ganancias: {earnings:.2f} USDT",
+        "referral_how_it_works": "💡 Cómo funciona:",
+        "referral_step1": "• Comparte tu enlace con amigos",
+        "referral_step2": "• Gana 2% de comisión en su primer depósito",
+        "referral_step3": "• Ganancias añadidas a tu saldo al instante",
+        "referral_commission_info": "🎁 ¡Obtén 2% del primer depósito de tu amigo!",
+        # Wallet command
+        "wallet_saved": "Billetera guardada:\n<code>{wallet}</code>\nRed: {network}",
+        "wallet_use_button": "Usar esta billetera para el próximo retiro",
+        "wallet_not_saved": "No hay billetera de retiro guardada. Configúrala con /wallet <dirección> [red]",
+        "wallet_send_address": "Envía la dirección de tu billetera de retiro y red opcional (ej: 0xabc... ERC20).",
+        # Help command
+        "help_message": "¿Necesitas ayuda? Haz clic abajo para chatear con soporte:",
+        "help_button": "💬 Abrir Chat de Soporte",
     },
     "ar": {
         "main_menu_title": "📋 القائمة الرئيسية",
@@ -720,6 +783,27 @@ TRANSLATIONS = {
         "withdraw_wallet_saved": "✅ تم حفظ المحفظة:\n<code>{wallet}</code>\nالشبكة: {network}",
         "withdraw_missing_data": "بيانات السحب مفقودة. ابدأ السحب من جديد.",
         "withdraw_request_success": "🧾 طلب السحب ناجح\nمعرف المعاملة: W-{ref}\nالمبلغ: {amount:.2f} USDT ({network})\nالمحفظة: {wallet}\nالشبكة: {network}\nالحالة: في انتظار الموافقة\nالتاريخ: {date}\n\nبمجرد تأكيد المسؤول، سيتم معالجة سحبك.",
+        # Referral translations
+        "referral_title": "👥 برنامج الإحالة",
+        "referral_intro": "شارك رابط الإحالة الخاص بك واكسب المكافآت!",
+        "referral_link_label": "🔗 رابطك:",
+        "referral_tap_to_copy": "👆 اضغط على الرابط أعلاه لنسخه",
+        "referral_stats_title": "📊 إحصائياتك:",
+        "referral_total_count": "👤 إجمالي الإحالات: {count}",
+        "referral_earnings": "💰 الأرباح: {earnings:.2f} USDT",
+        "referral_how_it_works": "💡 كيف يعمل:",
+        "referral_step1": "• شارك رابطك مع الأصدقاء",
+        "referral_step2": "• اكسب عمولة 2٪ من أول إيداع لهم",
+        "referral_step3": "• الأرباح تضاف إلى رصيدك فوراً",
+        "referral_commission_info": "🎁 احصل على 2٪ من أول إيداع لصديقك!",
+        # Wallet command
+        "wallet_saved": "المحفظة المحفوظة:\n<code>{wallet}</code>\nالشبكة: {network}",
+        "wallet_use_button": "استخدم هذه المحفظة للسحب التالي",
+        "wallet_not_saved": "لا توجد محفظة سحب محفوظة. قم بتعيينها باستخدام /wallet <العنوان> [الشبكة]",
+        "wallet_send_address": "أرسل عنوان محفظة السحب والشبكة الاختيارية (مثال: 0xabc... ERC20).",
+        # Help command
+        "help_message": "تحتاج مساعدة؟ انقر أدناه للدردشة مع الدعم:",
+        "help_button": "💬 فتح محادثة الدعم",
     }
 }
 DEFAULT_LANG = "en"
@@ -1337,14 +1421,27 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id = query.from_user.id
             bot_username = (await context.bot.get_me()).username
             referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+            
             async with async_session() as session:
                 lang = await get_user_language(session, user_id, update=update)
+                user = await get_user(session, user_id)
+                
+                referral_count = int(user.get('referral_count', 0))
+                referral_earnings = float(user.get('referral_earnings', 0.0))
             
             text = (
-                f"👥 <b>Referral Program</b>\n\n"
-                f"Share your referral link and earn rewards!\n\n"
-                f"🔗 Your Link:\n<code>{referral_link}</code>\n\n"
-                f"💰 Earn commissions on every investment!"
+                f"<b>{t(lang, 'referral_title')}</b>\n\n"
+                f"{t(lang, 'referral_intro')}\n\n"
+                f"{t(lang, 'referral_link_label')}\n<code>{referral_link}</code>\n"
+                f"{t(lang, 'referral_tap_to_copy')}\n\n"
+                f"<b>{t(lang, 'referral_stats_title')}</b>\n"
+                f"{t(lang, 'referral_total_count', count=referral_count)}\n"
+                f"{t(lang, 'referral_earnings', earnings=referral_earnings)}\n\n"
+                f"<b>{t(lang, 'referral_how_it_works')}</b>\n"
+                f"{t(lang, 'referral_step1')}\n"
+                f"{t(lang, 'referral_step2')}\n"
+                f"{t(lang, 'referral_step3')}\n\n"
+                f"{t(lang, 'referral_commission_info')}"
             )
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📋 Copy Link", switch_inline_query=referral_link)],
@@ -1913,6 +2010,60 @@ async def admin_confirm_callback(update: Update, context: ContextTypes.DEFAULT_T
                     await update_user(session, tx.user_id, balance=new_balance)
                     await session.execute(sa_update(Transaction).where(Transaction.id == tx_db_id).values(status='credited'))
                     await session.commit()
+                    
+                    # Process referral commission (2% of first deposit only)
+                    referrer_id = user.get('referrer_id')
+                    if referrer_id:
+                        # Check if this is the user's first credited deposit
+                        result_check = await session.execute(
+                            select(Transaction).where(
+                                Transaction.user_id == tx.user_id,
+                                Transaction.type == 'invest',
+                                Transaction.status == 'credited',
+                                Transaction.id != tx_db_id  # Exclude current transaction
+                            )
+                        )
+                        previous_deposits = result_check.scalars().all()
+                        
+                        # Only give commission on first deposit
+                        if not previous_deposits:
+                            commission_rate = 0.02  # 2% commission on first deposit
+                            commission = float(tx.amount or 0) * commission_rate
+                            
+                            # Get referrer and update their earnings
+                            referrer = await get_user(session, referrer_id)
+                            referrer_balance = float(referrer.get('balance') or 0) + commission
+                            referrer_earnings = float(referrer.get('referral_earnings') or 0) + commission
+                            
+                            await update_user(session, referrer_id, 
+                                            balance=referrer_balance,
+                                            referral_earnings=referrer_earnings)
+                            
+                            # Log commission transaction
+                            await log_transaction(
+                                session,
+                                user_id=referrer_id,
+                                ref=None,
+                                type='referral_commission',
+                                amount=commission,
+                                status='credited',
+                                proof=f'Commission from user {tx.user_id} first deposit',
+                                wallet='',
+                                network='',
+                                created_at=datetime.utcnow()
+                            )
+                            
+                            # Notify referrer
+                            try:
+                                await context.application.bot.send_message(
+                                    chat_id=referrer_id,
+                                    text=f"💰 Referral Commission Earned!\n\n"
+                                         f"Amount: {commission:.2f} USDT (2%)\n"
+                                         f"From: User {tx.user_id}'s first deposit\n"
+                                         f"New Balance: {referrer_balance:.2f} USDT"
+                                )
+                            except Exception:
+                                logger.exception("Failed to notify referrer")
 
                     receipt_text = (
                         "  **Deposit Receipt **\n"
@@ -2935,23 +3086,25 @@ async def balance_text_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
     args = context.args
     if args:
         wallet_address = args[0]
         wallet_network = args[1] if len(args) > 1 else ''
         async with async_session() as session:
             await update_user(session, user_id, wallet_address=wallet_address, wallet_network=wallet_network)
-        await update.effective_message.reply_text(f"Wallet saved:\n<code>{wallet_address}</code>\nNetwork: {wallet_network}", parse_mode="HTML")
+        await update.effective_message.reply_text(t(lang, "withdraw_wallet_saved", wallet=wallet_address, network=wallet_network), parse_mode="HTML")
     else:
         async with async_session() as session:
             user = await get_user(session, user_id)
         wallet_address = user.get('wallet_address')
         wallet_network = user.get('wallet_network')
         if wallet_address:
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton("Use this wallet for next withdrawal", callback_data="withdraw_use_saved")]])
-            await update.effective_message.reply_text(f"Saved wallet:\n<code>{wallet_address}</code>\nNetwork: {wallet_network}", parse_mode="HTML", reply_markup=kb)
+            kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, "wallet_use_button"), callback_data="withdraw_use_saved")]])
+            await update.effective_message.reply_text(t(lang, "wallet_saved", wallet=wallet_address, network=wallet_network), parse_mode="HTML", reply_markup=kb)
         else:
-            await update.effective_message.reply_text("No withdrawal wallet saved. Set it with /wallet <address> [network]")
+            await update.effective_message.reply_text(t(lang, "wallet_not_saved"))
 
 async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
@@ -2959,20 +3112,71 @@ async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.effective_message.reply_text(t(lang, "info_text"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), parse_mode="HTML")
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_button = InlineKeyboardMarkup([[InlineKeyboardButton("💬 Open Support Chat", url=SUPPORT_URL)]])
-    await update.effective_message.reply_text("Need assistance? Click below to chat with support:", reply_markup=help_button)
+    user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
+    help_button = InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, "help_button"), url=SUPPORT_URL)]])
+    await update.effective_message.reply_text(t(lang, "help_message"), reply_markup=help_button)
 
 async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text("Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).")
+        await update.callback_query.message.reply_text(t(lang, "wallet_send_address"))
     else:
-        await update.effective_message.reply_text("Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).")
+        await update.effective_message.reply_text(t(lang, "wallet_send_address"))
     return WITHDRAW_WALLET
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # Check for referral code in arguments
+    referrer_id = None
+    if context.args:
+        arg = context.args[0]
+        if arg.startswith('ref_'):
+            try:
+                referrer_id = int(arg.replace('ref_', ''))
+                # Don't allow self-referral
+                if referrer_id == user_id:
+                    referrer_id = None
+            except ValueError:
+                referrer_id = None
+    
     async with async_session() as session:
-        lang = await get_user_language(session, update.effective_user.id, update=update)
+        # Get or create user
+        result = await session.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        
+        # If new user and has referrer, link them
+        if not user and referrer_id:
+            # Verify referrer exists
+            referrer_result = await session.execute(select(User).where(User.id == referrer_id))
+            referrer = referrer_result.scalar_one_or_none()
+            
+            if referrer:
+                # Create new user with referrer
+                user = User(id=user_id, referrer_id=referrer_id)
+                session.add(user)
+                await session.commit()
+                
+                # Increment referrer's count
+                await update_user(session, referrer_id, 
+                                referral_count=int(referrer.referral_count or 0) + 1)
+                
+                # Notify referrer
+                try:
+                    await context.bot.send_message(
+                        chat_id=referrer_id,
+                        text=f"🎉 New referral! User {user_id} joined using your link."
+                    )
+                except Exception:
+                    pass
+        
+        lang = await get_user_language(session, user_id, update=update)
+    
     WELCOME_TEXT = (
         "🎉 <b>Welcome to AiCrypto Bot!</b>\n\n"
         "🤖 Your Personal AI Trading Assistant\n"
