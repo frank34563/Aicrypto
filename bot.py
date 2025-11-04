@@ -76,9 +76,9 @@ BINANCE_API_URL = "https://api.binance.com/api/v3/ticker/price"
 USE_BINANCE = True  # Can be toggled by admin commands
 
 # Global trading configuration (can be modified by admin commands)
-GLOBAL_DAILY_PERCENT = 1.5  # default 1.5% daily
-GLOBAL_TRADE_PERCENT = 0.5  # default 0.5% per trade
-GLOBAL_TRADES_PER_DAY = 144  # default
+GLOBAL_DAILY_PERCENT = 1.375  # default 1.375% daily (mid-range between 1.25% and 1.5%)
+GLOBAL_TRADE_PERCENT = 0.15  # default 0.15% per trade (mid-range between 0.05% and 0.25%)
+GLOBAL_TRADES_PER_DAY = 32  # default 32 trades per day (45 minute frequency)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -612,8 +612,8 @@ def pick_random_pair() -> str:
 
 # Trading control
 TRADING_ENABLED = True
-TRADING_FREQ_MINUTES = 10
-TRADES_PER_DAY = 144  # Default: 144 trades per day (every 10 minutes)
+TRADING_FREQ_MINUTES = 45  # Default: 45 minutes between trades
+TRADES_PER_DAY = 32  # Default: 32 trades per day (every 45 minutes)
 MINUTES_PER_DAY = 24 * 60  # 1440 minutes in a day
 TRADING_JOB_ID = 'trading_job_scheduled'
 _trading_job = None
@@ -1551,8 +1551,13 @@ async def cmd_trading_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.effective_message.reply_text("Forbidden: admin only.")
         return
     
-    # Get per-user overrides count
+    # Get configured ranges from Config
     async with async_session() as session:
+        trade_min = await get_config(session, 'trade_range_min', '0.05')
+        trade_max = await get_config(session, 'trade_range_max', '0.25')
+        daily_min = await get_config(session, 'daily_range_min', '1.25')
+        daily_max = await get_config(session, 'daily_range_max', '1.5')
+        
         result = await session.execute(select(UserTradeConfig))
         user_configs = result.scalars().all()
         override_count = len(user_configs)
@@ -1568,10 +1573,10 @@ async def cmd_trading_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
     status_text = (
         "⚙️ Trading Configuration Status\n\n"
         f"🔄 Trading: {'ENABLED' if TRADING_ENABLED else 'DISABLED'}\n"
-        f"⏱ Frequency: {TRADING_FREQ_MINUTES} minutes\n"
-        f"📊 Trades per day: {TRADES_PER_DAY}\n"
-        f"💹 Global daily percent: {GLOBAL_DAILY_PERCENT}%\n"
-        f"📈 Global trade percent: {GLOBAL_TRADE_PERCENT}%\n"
+        f"⏱ Frequency: {TRADING_FREQ_MINUTES} minutes (determined by trades per day)\n"
+        f"📊 Trades per day: {TRADES_PER_DAY} (determined by frequency)\n"
+        f"💹 Global daily percent: {daily_min}% to {daily_max}%\n"
+        f"📈 Global trade percent: {trade_min}% to {trade_max}%\n"
         f"👤 User overrides: {override_count}"
         f"{override_text}"
     )
