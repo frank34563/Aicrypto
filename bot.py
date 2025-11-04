@@ -883,17 +883,22 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
         return
+    
+    # Answer callback immediately to remove loading state
     await query.answer()
     data = query.data or ""
 
+    # Language settings
     if data == "lang_auto" or data.startswith("lang_"):
         await language_callback_handler(update, context)
         return
 
+    # Settings: Set wallet
     if data == "settings_set_wallet":
         await settings_start_wallet(update, context)
         return
 
+    # Exit/Return to main menu
     if data == "menu_exit":
         await cancel_conv(update, context)
         async with async_session() as session:
@@ -906,55 +911,116 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "👇 Select an option below"
         )
         try:
-            await query.message.edit_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), parse_mode="HTML")
-        except Exception:
-            await query.message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), parse_mode="HTML")
+            await query.message.edit_text(
+                WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), 
+                reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), 
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.debug(f"Failed to edit message, sending new one: {e}")
+            try:
+                await query.message.reply_text(
+                    WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), 
+                    reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), 
+                    parse_mode="HTML"
+                )
+            except Exception as e2:
+                logger.exception(f"Failed to send welcome message: {e2}")
         return
 
+    # Balance
     if data == "menu_balance":
-        async with async_session() as session:
-            await send_balance_message(query, session, query.from_user.id)
+        try:
+            async with async_session() as session:
+                await send_balance_message(query, session, query.from_user.id)
+        except Exception as e:
+            logger.exception(f"Error displaying balance: {e}")
+            await query.message.reply_text("⚠️ Error loading balance. Please try again.")
         return
 
+    # History
     if data == "menu_history":
-        await history_command(update, context)
+        try:
+            await history_command(update, context)
+        except Exception as e:
+            logger.exception(f"Error displaying history: {e}")
+            await query.message.reply_text("⚠️ Error loading history. Please try again.")
         return
 
+    # Referrals
     if data == "menu_referrals":
-        user_id = query.from_user.id
-        bot_username = (await context.bot.get_me()).username
-        referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
-        async with async_session() as session:
-            lang = await get_user_language(session, user_id, update=update)
-        text = (f"👥 {t(lang,'settings_title')}\n\nShare this link:\n<code>{referral_link}</code>")
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("🔗 Copy Link", switch_inline_query_current_chat=referral_link)], [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]])
-        await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        try:
+            user_id = query.from_user.id
+            bot_username = (await context.bot.get_me()).username
+            referral_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+            async with async_session() as session:
+                lang = await get_user_language(session, user_id, update=update)
+            
+            text = (
+                f"👥 <b>Referral Program</b>\n\n"
+                f"Share your referral link and earn rewards!\n\n"
+                f"🔗 Your Link:\n<code>{referral_link}</code>\n\n"
+                f"💰 Earn commissions on every investment!"
+            )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Copy Link", switch_inline_query=referral_link)],
+                [InlineKeyboardButton("« Back to Menu", callback_data="menu_exit")]
+            ])
+            try:
+                await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+            except Exception:
+                await query.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception as e:
+            logger.exception(f"Error displaying referrals: {e}")
+            await query.message.reply_text("⚠️ Error loading referral info. Please try again.")
         return
 
+    # Settings
     if data == "menu_settings":
-        async with async_session() as session:
-            lang = await get_user_language(session, query.from_user.id, update=update)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton(t(lang,"change_language"), callback_data="settings_language")],
-            [InlineKeyboardButton(t(lang,"settings_wallet"), callback_data="settings_set_wallet")],
-            [InlineKeyboardButton("Back to Main Menu", callback_data="menu_exit")]
-        ])
-        await query.edit_message_text(t(lang, "settings_title"), reply_markup=kb)
+        try:
+            async with async_session() as session:
+                lang = await get_user_language(session, query.from_user.id, update=update)
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🌍 " + t(lang,"change_language"), callback_data="settings_language")],
+                [InlineKeyboardButton("💳 " + t(lang,"settings_wallet"), callback_data="settings_set_wallet")],
+                [InlineKeyboardButton("« Back to Menu", callback_data="menu_exit")]
+            ])
+            await query.edit_message_text(
+                t(lang, "settings_title") + "\n\nSelect an option:", 
+                reply_markup=kb
+            )
+        except Exception as e:
+            logger.exception(f"Error displaying settings: {e}")
+            await query.message.reply_text("⚠️ Error loading settings. Please try again.")
         return
 
+    # Language settings
     if data == "settings_language":
         await settings_language_open_callback(update, context)
         return
 
+    # Information
     if data == "menu_info":
-        async with async_session() as session:
-            lang = await get_user_language(session, query.from_user.id, update=update)
-        await query.edit_message_text(t(lang, "info_text"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), parse_mode="HTML")
+        try:
+            async with async_session() as session:
+                lang = await get_user_language(session, query.from_user.id, update=update)
+            await query.edit_message_text(
+                t(lang, "info_text"), 
+                reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), 
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.exception(f"Error displaying info: {e}")
+            await query.message.reply_text("⚠️ Error loading information. Please try again.")
         return
 
+    # Help (legacy - now uses URL button directly)
     if data == "menu_help":
-        help_button = InlineKeyboardMarkup([[InlineKeyboardButton("❓ Help", url=SUPPORT_URL)]])
-        await query.message.reply_text("Click the button below for help:", reply_markup=help_button)
+        help_button = InlineKeyboardMarkup([[InlineKeyboardButton("💬 Open Support", url=SUPPORT_URL)]])
+        await query.message.reply_text(
+            "Need help? Click below to chat with our support team:", 
+            reply_markup=help_button
+        )
         return
 
 # -----------------------
@@ -963,19 +1029,32 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def send_balance_message(query_or_message, session: AsyncSession, user_id: int):
     user = await get_user(session, user_id)
     lang = await get_user_language(session, user_id)
-    text = (f"💎 <b>Your Balance</b>\n"
-            f"Available: <b>{float(user.get('balance') or 0):.6f}$</b>\n"
-            f"In Process: <b>{float(user.get('balance_in_process') or 0):.6f}$</b>\n"
-            f"Daily Profit: <b>{float(user.get('daily_profit') or 0):.6f}$</b>\n"
-            f"Total Profit: <b>{float(user.get('total_profit') or 0):.6f}$</b>\n\nManager: {SUPPORT_USER}")
+    
+    # Format balance values with proper decimals
+    balance = format_price(float(user.get('balance') or 0), decimals=2)
+    in_process = format_price(float(user.get('balance_in_process') or 0), decimals=2)
+    daily_profit = format_price(float(user.get('daily_profit') or 0), decimals=2)
+    total_profit = format_price(float(user.get('total_profit') or 0), decimals=2)
+    
+    text = (
+        f"💰 <b>Your Account Balance</b>\n\n"
+        f"💵 <b>Available:</b> {balance} USDT\n"
+        f"⏳ <b>In Process:</b> {in_process} USDT\n\n"
+        f"📊 <b>Today's Profit:</b> {daily_profit} USDT\n"
+        f"📈 <b>Total Profit:</b> {total_profit} USDT\n\n"
+        f"👤 <b>Manager:</b> {SUPPORT_USER}"
+    )
+    
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("« Back to Menu", callback_data="menu_exit")]])
+    
     try:
         if hasattr(query_or_message, "message") and hasattr(query_or_message, "data"):
             try:
-                await query_or_message.message.edit_text(text, parse_mode="HTML", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+                await query_or_message.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
                 return
             except Exception:
                 pass
-        await query_or_message.reply_text(text, parse_mode="HTML", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+        await query_or_message.reply_text(text, parse_mode="HTML", reply_markup=kb)
     except Exception:
         logger.exception("Failed to send balance message for user %s", user_id)
 
