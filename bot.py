@@ -1495,69 +1495,74 @@ async def invest_network_selected(update: Update, context: ContextTypes.DEFAULT_
     await query.answer()
     user_id = query.from_user.id
     
-    async with async_session() as session:
-        lang = await get_user_language(session, user_id, update)
-    
-    amount = context.user_data.get('invest_amount')
-    if amount is None:
-        await query.message.reply_text(t(lang, "invest_no_amount"))
-        return ConversationHandler.END
-    
-    # Extract selected coin from callback data (e.g., "invest_network_USDT" -> "USDT")
-    coin = query.data.replace("invest_network_", "")
-    context.user_data['invest_coin'] = coin
-    
-    # Map SOLANA to SOL for consistency
-    coin_lookup = coin if coin != "SOLANA" else "SOL"
-    
-    # Get deposit wallet for selected coin
-    async with async_session() as session:
-        deposit_wallet = await get_primary_deposit_wallet(session, coin_lookup)
-    
-    # Fall back to MASTER_WALLET if no wallet configured (only for USDT)
-    if deposit_wallet:
-        wallet = deposit_wallet['address']
-        network = deposit_wallet['network']
-    else:
-        if coin == "USDT":
-            wallet = MASTER_WALLET
-            network = MASTER_NETWORK
-        else:
-            await query.message.reply_text(
-                f"❌ No deposit wallet configured for {coin}.\n"
-                f"Please contact admin or choose a different network.",
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("« Back to network selection", callback_data="invest_back_to_network")
-                ]])
-            )
-            return INVEST_NETWORK
-    
-    # Display network name based on coin
-    network_display_name = {
-        "USDT": "USDT (TRC20)",
-        "BTC": "Bitcoin (BTC)",
-        "SOLANA": "Solana (SOL)",
-        "SOL": "Solana (SOL)"
-    }.get(coin, coin)
-    
-    wallet_msg = (
-        f"📥 Deposit {amount:.2f}$ using {network_display_name}\n\n"
-        f"Send to wallet:\n"
-        f"Wallet: <code>{wallet}</code>\n"
-        f"Network: <b>{network}</b>\n\n"
-        f"After sending, upload a screenshot OR send the transaction hash (txid)."
-    )
-    
     try:
-        await query.message.edit_text(wallet_msg, parse_mode="HTML")
-    except Exception:
-        await query.message.reply_text(wallet_msg, parse_mode="HTML")
-    
-    # Store wallet and network in user_data for later use
-    context.user_data['invest_wallet'] = wallet
-    context.user_data['invest_network'] = network
-    
-    return INVEST_PROOF
+        async with async_session() as session:
+            lang = await get_user_language(session, user_id, update)
+        
+        amount = context.user_data.get('invest_amount')
+        if amount is None:
+            await query.message.reply_text(t(lang, "invest_no_amount"))
+            return ConversationHandler.END
+        
+        # Extract selected coin from callback data (e.g., "invest_network_USDT" -> "USDT")
+        coin = query.data.replace("invest_network_", "")
+        context.user_data['invest_coin'] = coin
+        
+        # Map SOLANA to SOL for consistency
+        coin_lookup = coin if coin != "SOLANA" else "SOL"
+        
+        # Get deposit wallet for selected coin
+        async with async_session() as session:
+            deposit_wallet = await get_primary_deposit_wallet(session, coin_lookup)
+        
+        # Fall back to MASTER_WALLET if no wallet configured (only for USDT)
+        if deposit_wallet:
+            wallet = deposit_wallet['address']
+            network = deposit_wallet['network']
+        else:
+            if coin == "USDT":
+                wallet = MASTER_WALLET
+                network = MASTER_NETWORK
+            else:
+                await query.message.reply_text(
+                    f"❌ No deposit wallet configured for {coin}.\n"
+                    f"Please contact admin or choose a different network.",
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("« Back to network selection", callback_data="invest_back_to_network")
+                    ]])
+                )
+                return INVEST_NETWORK
+        
+        # Display network name based on coin
+        network_display_name = {
+            "USDT": "USDT (TRC20)",
+            "BTC": "Bitcoin (BTC)",
+            "SOLANA": "Solana (SOL)",
+            "SOL": "Solana (SOL)"
+        }.get(coin, coin)
+        
+        wallet_msg = (
+            f"📥 Deposit {amount:.2f}$ using {network_display_name}\n\n"
+            f"Send to wallet:\n"
+            f"Wallet: <code>{wallet}</code>\n"
+            f"Network: <b>{network}</b>\n\n"
+            f"After sending, upload a screenshot OR send the transaction hash (txid)."
+        )
+        
+        try:
+            await query.message.edit_text(wallet_msg, parse_mode="HTML")
+        except Exception:
+            await query.message.reply_text(wallet_msg, parse_mode="HTML")
+        
+        # Store wallet and network in user_data for later use
+        context.user_data['invest_wallet'] = wallet
+        context.user_data['invest_network'] = network
+        
+        return INVEST_PROOF
+    except Exception as e:
+        logger.exception("Error in invest_network_selected")
+        await query.message.reply_text(f"Error selecting network: {str(e)}\n\nPlease try again or contact support.")
+        return ConversationHandler.END
 
 
 async def invest_proof_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2471,32 +2476,38 @@ async def cmd_set_deposit_wallet(update: Update, context: ContextTypes.DEFAULT_T
         await update.effective_message.reply_text("Forbidden: admin only.")
         return
     
-    args = context.args
-    if len(args) < 3:
+    try:
+        args = context.args if hasattr(context, 'args') and context.args else []
+        if len(args) < 3:
+            await update.effective_message.reply_text(
+                "Usage: /set_deposit_wallet <coin> <network> <address> [primary]\n"
+                "Example: /set_deposit_wallet BTC BTC bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh primary\n"
+                "Example: /set_deposit_wallet USDT TRC20 TAbc123... primary\n"
+                "Example: /set_deposit_wallet SOLANA SOL <sol-address> primary"
+            )
+            return
+        
+        coin = args[0].upper()
+        network = args[1].upper()
+        address = args[2]
+        is_primary = len(args) > 3 and args[3].lower() == 'primary'
+        
+        async with async_session() as session:
+            await set_deposit_wallet(session, coin, network, address, is_primary)
+        
+        primary_text = " (marked as primary)" if is_primary else ""
         await update.effective_message.reply_text(
-            "Usage: /set_deposit_wallet <coin> <network> <address> [primary]\n"
-            "Example: /set_deposit_wallet BTC BTC bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh primary\n"
-            "Example: /set_deposit_wallet USDT TRC20 TAbc123... primary"
+            f"✅ Deposit wallet added{primary_text}:\n"
+            f"Coin: {coin}\n"
+            f"Network: {network}\n"
+            f"Address: <code>{address}</code>",
+            parse_mode="HTML"
         )
-        return
-    
-    coin = args[0].upper()
-    network = args[1].upper()
-    address = args[2]
-    is_primary = len(args) > 3 and args[3].lower() == 'primary'
-    
-    async with async_session() as session:
-        await set_deposit_wallet(session, coin, network, address, is_primary)
-    
-    primary_text = " (marked as primary)" if is_primary else ""
-    await update.effective_message.reply_text(
-        f"✅ Deposit wallet added{primary_text}:\n"
-        f"Coin: {coin}\n"
-        f"Network: {network}\n"
-        f"Address: <code>{address}</code>",
-        parse_mode="HTML"
-    )
-    await post_admin_log(context.bot, f"Admin set deposit wallet: {coin}/{network} = {address}{primary_text}")
+        await post_admin_log(context.bot, f"Admin set deposit wallet: {coin}/{network} = {address}{primary_text}")
+    except Exception as e:
+        logger.exception("Error in cmd_set_deposit_wallet")
+        await update.effective_message.reply_text(f"Error setting wallet: {str(e)}")
+
 
 async def cmd_list_deposit_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /list_deposit_wallets [coin]"""
@@ -2505,28 +2516,32 @@ async def cmd_list_deposit_wallets(update: Update, context: ContextTypes.DEFAULT
         await update.effective_message.reply_text("Forbidden: admin only.")
         return
     
-    args = context.args
-    coin = args[0].upper() if args else None
-    
-    async with async_session() as session:
-        wallets = await get_deposit_wallets(session, coin)
-    
-    if not wallets:
-        coin_text = f" for {coin}" if coin else ""
-        await update.effective_message.reply_text(f"No deposit wallets configured{coin_text}.")
-        return
-    
-    lines = ["💳 Deposit Wallets:\n"]
-    for w in wallets:
-        primary_mark = " ⭐ PRIMARY" if w['is_primary'] else ""
-        lines.append(
-            f"ID: {w['id']}{primary_mark}\n"
-            f"  Coin: {w['coin']}\n"
-            f"  Network: {w['network']}\n"
-            f"  Address: <code>{w['address']}</code>\n"
-        )
-    
-    await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+    try:
+        args = context.args if hasattr(context, 'args') and context.args else []
+        coin = args[0].upper() if args else None
+        
+        async with async_session() as session:
+            wallets = await get_deposit_wallets(session, coin)
+        
+        if not wallets:
+            coin_text = f" for {coin}" if coin else ""
+            await update.effective_message.reply_text(f"No deposit wallets configured{coin_text}.")
+            return
+        
+        lines = ["💳 Deposit Wallets:\n"]
+        for w in wallets:
+            primary_mark = " ⭐ PRIMARY" if w['is_primary'] else ""
+            lines.append(
+                f"ID: {w['id']}{primary_mark}\n"
+                f"  Coin: {w['coin']}\n"
+                f"  Network: {w['network']}\n"
+                f"  Address: <code>{w['address']}</code>\n"
+            )
+        
+        await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+    except Exception as e:
+        logger.exception("Error in cmd_list_deposit_wallets")
+        await update.effective_message.reply_text(f"Error listing wallets: {str(e)}")
 
 async def cmd_mark_primary_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /mark_primary_wallet <wallet_id>"""
@@ -2535,24 +2550,28 @@ async def cmd_mark_primary_wallet(update: Update, context: ContextTypes.DEFAULT_
         await update.effective_message.reply_text("Forbidden: admin only.")
         return
     
-    args = context.args
-    if not args or not args[0].isdigit():
-        await update.effective_message.reply_text(
-            "Usage: /mark_primary_wallet <wallet_id>\n"
-            "Use /list_deposit_wallets to see wallet IDs"
-        )
-        return
-    
-    wallet_id = int(args[0])
-    
-    async with async_session() as session:
-        success = await mark_primary_deposit_wallet(session, wallet_id)
-    
-    if success:
-        await update.effective_message.reply_text(f"✅ Wallet {wallet_id} marked as primary")
-        await post_admin_log(context.bot, f"Admin marked wallet {wallet_id} as primary")
-    else:
-        await update.effective_message.reply_text(f"❌ Wallet {wallet_id} not found")
+    try:
+        args = context.args if hasattr(context, 'args') and context.args else []
+        if not args or not args[0].isdigit():
+            await update.effective_message.reply_text(
+                "Usage: /mark_primary_wallet <wallet_id>\n"
+                "Use /list_deposit_wallets to see wallet IDs"
+            )
+            return
+        
+        wallet_id = int(args[0])
+        
+        async with async_session() as session:
+            success = await mark_primary_deposit_wallet(session, wallet_id)
+        
+        if success:
+            await update.effective_message.reply_text(f"✅ Wallet {wallet_id} marked as primary")
+            await post_admin_log(context.bot, f"Admin marked wallet {wallet_id} as primary")
+        else:
+            await update.effective_message.reply_text(f"❌ Wallet {wallet_id} not found")
+    except Exception as e:
+        logger.exception("Error in cmd_mark_primary_wallet")
+        await update.effective_message.reply_text(f"Error marking wallet as primary: {str(e)}")
 
 async def cmd_remove_deposit_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /remove_deposit_wallet <wallet_id>"""
@@ -2561,24 +2580,28 @@ async def cmd_remove_deposit_wallet(update: Update, context: ContextTypes.DEFAUL
         await update.effective_message.reply_text("Forbidden: admin only.")
         return
     
-    args = context.args
-    if not args or not args[0].isdigit():
-        await update.effective_message.reply_text(
-            "Usage: /remove_deposit_wallet <wallet_id>\n"
-            "Use /list_deposit_wallets to see wallet IDs"
-        )
-        return
-    
-    wallet_id = int(args[0])
-    
-    async with async_session() as session:
-        success = await delete_deposit_wallet(session, wallet_id)
-    
-    if success:
-        await update.effective_message.reply_text(f"✅ Wallet {wallet_id} removed")
-        await post_admin_log(context.bot, f"Admin removed wallet {wallet_id}")
-    else:
-        await update.effective_message.reply_text(f"❌ Wallet {wallet_id} not found")
+    try:
+        args = context.args if hasattr(context, 'args') and context.args else []
+        if not args or not args[0].isdigit():
+            await update.effective_message.reply_text(
+                "Usage: /remove_deposit_wallet <wallet_id>\n"
+                "Use /list_deposit_wallets to see wallet IDs"
+            )
+            return
+        
+        wallet_id = int(args[0])
+        
+        async with async_session() as session:
+            success = await delete_deposit_wallet(session, wallet_id)
+        
+        if success:
+            await update.effective_message.reply_text(f"✅ Wallet {wallet_id} removed")
+            await post_admin_log(context.bot, f"Admin removed wallet {wallet_id}")
+        else:
+            await update.effective_message.reply_text(f"❌ Wallet {wallet_id} not found")
+    except Exception as e:
+        logger.exception("Error in cmd_remove_deposit_wallet")
+        await update.effective_message.reply_text(f"Error removing wallet: {str(e)}")
 
 async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /admin_cmds - Show all admin commands"""
