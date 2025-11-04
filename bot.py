@@ -367,6 +367,34 @@ TRANSLATIONS = {
             "📊 <b>Real-time Updates</b>\n\n"
             "Need help? Contact support anytime!"
         ),
+        # Invest flow translations
+        "invest_enter_amount": "📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.",
+        "invest_invalid_amount": "Invalid amount. Send a positive number like 100 or 50.50, or /cancel.",
+        "invest_send_proof": "📥 Deposit {amount:.2f}$\nSend to wallet:\nWallet: <code>{wallet}</code>\nNetwork: <b>{network}</b>\n\nAfter sending, upload a screenshot OR send the transaction hash (txid).",
+        "invest_no_amount": "No pending invest amount. Start again with /invest.",
+        "invest_upload_proof": "Please upload a screenshot or send the txid, or /cancel.",
+        "invest_confirm_prompt": "Proof received: <code>{proof}</code>\nIf you sent exactly {amount:.2f}$, press confirm. Otherwise Cancel.",
+        "invest_confirm_yes": "✅ I sent the exact amount",
+        "invest_confirm_no": "❌ Cancel",
+        "invest_missing_data": "Missing data. Restart invest flow.",
+        "invest_request_success": "🧾 Deposit Request Successful\nTransaction ID: D-{ref}\nAmount: {amount:.2f} USDT ({network})\nWallet: {wallet}\nNetwork: {network}\nStatus: Pending Approval\nDate: {date}\n\nOnce confirmed, your balance will be updated automatically.",
+        # Withdraw flow translations
+        "withdraw_enter_amount": "💸 Enter the amount you want to withdraw (numbers only). Send /cancel to abort.",
+        "withdraw_invalid_amount": "Invalid amount. Send a positive number like 50 or 25.75, or /cancel.",
+        "withdraw_insufficient": "Insufficient balance. Available: {balance:.2f}$. Enter smaller amount or /cancel.",
+        "withdraw_saved_wallet": "Your saved wallet:\n<code>{wallet}</code>\nNetwork: <b>{network}</b>\n\nOr send a new wallet and optional network.",
+        "withdraw_no_saved": "No saved wallet. Send wallet address and optional network (e.g., 0xabc... ERC20).",
+        "withdraw_use_saved": "Use saved wallet",
+        "withdraw_no_saved_found": "No saved wallet found. Please send wallet address.",
+        "withdraw_send_wallet": "Please send wallet address and optional network.",
+        "withdraw_looks_command": "Looks like a command. Send only the wallet address and optional network.",
+        "withdraw_invalid_wallet": "This address doesn't look valid. Send 'yes' to save anyway or send correct address.",
+        "withdraw_confirm_prompt": "Confirm withdrawal:\nAmount: {amount:.2f}$\nWallet: <code>{wallet}</code>\nNetwork: <b>{network}</b>",
+        "withdraw_confirm_yes": "✅ Confirm",
+        "withdraw_confirm_no": "❌ Cancel",
+        "withdraw_wallet_saved": "✅ Wallet saved:\n<code>{wallet}</code>\nNetwork: {network}",
+        "withdraw_missing_data": "Missing withdrawal data. Start withdraw again.",
+        "withdraw_request_success": "🧾 Withdrawal Request Successful\nTransaction ID: W-{ref}\nAmount: {amount:.2f} USDT ({network})\nWallet: {wallet}\nNetwork: {network}\nStatus: Pending Approval\nDate: {date}\n\nOnce confirmed by admin, your withdrawal will be processed.",
     },
     "fr": {
         "main_menu_title": "📋 Menu Principal",
@@ -404,6 +432,34 @@ TRANSLATIONS = {
             "📊 <b>Mises à jour en temps réel</b>\n\n"
             "Besoin d'aide? Contactez le support!"
         ),
+        # Invest flow translations
+        "invest_enter_amount": "📈 Entrez le montant que vous souhaitez investir (chiffres uniquement, ex: 100.50). Envoyez /cancel pour annuler.",
+        "invest_invalid_amount": "Montant invalide. Envoyez un nombre positif comme 100 ou 50.50, ou /cancel.",
+        "invest_send_proof": "📥 Dépôt de {amount:.2f}$\nEnvoyez à:\nPortefeuille: <code>{wallet}</code>\nRéseau: <b>{network}</b>\n\nAprès l'envoi, téléchargez une capture d'écran OU envoyez le hash de transaction (txid).",
+        "invest_no_amount": "Aucun montant d'investissement en attente. Recommencez avec /invest.",
+        "invest_upload_proof": "Veuillez télécharger une capture d'écran ou envoyer le txid, ou /cancel.",
+        "invest_confirm_prompt": "Preuve reçue: <code>{proof}</code>\nSi vous avez envoyé exactement {amount:.2f}$, appuyez sur confirmer. Sinon Annuler.",
+        "invest_confirm_yes": "✅ J'ai envoyé le montant exact",
+        "invest_confirm_no": "❌ Annuler",
+        "invest_missing_data": "Données manquantes. Redémarrez le flux d'investissement.",
+        "invest_request_success": "🧾 Demande de Dépôt Réussie\nID de transaction: D-{ref}\nMontant: {amount:.2f} USDT ({network})\nPortefeuille: {wallet}\nRéseau: {network}\nStatut: En attente d'approbation\nDate: {date}\n\nUne fois confirmé, votre solde sera mis à jour automatiquement.",
+        # Withdraw flow translations
+        "withdraw_enter_amount": "💸 Entrez le montant que vous souhaitez retirer (chiffres uniquement). Envoyez /cancel pour annuler.",
+        "withdraw_invalid_amount": "Montant invalide. Envoyez un nombre positif comme 50 ou 25.75, ou /cancel.",
+        "withdraw_insufficient": "Solde insuffisant. Disponible: {balance:.2f}$. Entrez un montant plus petit ou /cancel.",
+        "withdraw_saved_wallet": "Votre portefeuille enregistré:\n<code>{wallet}</code>\nRéseau: <b>{network}</b>\n\nOu envoyez un nouveau portefeuille et réseau facultatif.",
+        "withdraw_no_saved": "Aucun portefeuille enregistré. Envoyez l'adresse du portefeuille et le réseau facultatif (ex: 0xabc... ERC20).",
+        "withdraw_use_saved": "Utiliser le portefeuille enregistré",
+        "withdraw_no_saved_found": "Aucun portefeuille enregistré trouvé. Veuillez envoyer l'adresse du portefeuille.",
+        "withdraw_send_wallet": "Veuillez envoyer l'adresse du portefeuille et le réseau facultatif.",
+        "withdraw_looks_command": "Ressemble à une commande. Envoyez uniquement l'adresse du portefeuille et le réseau facultatif.",
+        "withdraw_invalid_wallet": "Cette adresse ne semble pas valide. Envoyez 'yes' pour enregistrer quand même ou envoyez la bonne adresse.",
+        "withdraw_confirm_prompt": "Confirmer le retrait:\nMontant: {amount:.2f}$\nPortefeuille: <code>{wallet}</code>\nRéseau: <b>{network}</b>",
+        "withdraw_confirm_yes": "✅ Confirmer",
+        "withdraw_confirm_no": "❌ Annuler",
+        "withdraw_wallet_saved": "✅ Portefeuille enregistré:\n<code>{wallet}</code>\nRéseau: {network}",
+        "withdraw_missing_data": "Données de retrait manquantes. Recommencez le retrait.",
+        "withdraw_request_success": "🧾 Demande de Retrait Réussie\nID de transaction: W-{ref}\nMontant: {amount:.2f} USDT ({network})\nPortefeuille: {wallet}\nRéseau: {network}\nStatut: En attente d'approbation\nDate: {date}\n\nUne fois confirmé par l'admin, votre retrait sera traité.",
     },
     "es": {
         "main_menu_title": "📋 Menú Principal",
@@ -441,6 +497,34 @@ TRANSLATIONS = {
             "📊 <b>Actualizaciones en tiempo real</b>\n\n"
             "¿Necesitas ayuda? ¡Contacta soporte!"
         ),
+        # Invest flow translations
+        "invest_enter_amount": "📈 Ingresa el monto que deseas invertir (solo números, ej: 100.50). Envía /cancel para cancelar.",
+        "invest_invalid_amount": "Monto inválido. Envía un número positivo como 100 o 50.50, o /cancel.",
+        "invest_send_proof": "📥 Depósito de {amount:.2f}$\nEnviar a:\nBilletera: <code>{wallet}</code>\nRed: <b>{network}</b>\n\nDespués de enviar, sube una captura de pantalla O envía el hash de transacción (txid).",
+        "invest_no_amount": "No hay monto de inversión pendiente. Comienza de nuevo con /invest.",
+        "invest_upload_proof": "Por favor sube una captura de pantalla o envía el txid, o /cancel.",
+        "invest_confirm_prompt": "Comprobante recibido: <code>{proof}</code>\nSi enviaste exactamente {amount:.2f}$, presiona confirmar. De lo contrario Cancelar.",
+        "invest_confirm_yes": "✅ Envié el monto exacto",
+        "invest_confirm_no": "❌ Cancelar",
+        "invest_missing_data": "Datos faltantes. Reinicia el flujo de inversión.",
+        "invest_request_success": "🧾 Solicitud de Depósito Exitosa\nID de transacción: D-{ref}\nMonto: {amount:.2f} USDT ({network})\nBilletera: {wallet}\nRed: {network}\nEstado: Pendiente de aprobación\nFecha: {date}\n\nUna vez confirmado, tu saldo se actualizará automáticamente.",
+        # Withdraw flow translations
+        "withdraw_enter_amount": "💸 Ingresa el monto que deseas retirar (solo números). Envía /cancel para cancelar.",
+        "withdraw_invalid_amount": "Monto inválido. Envía un número positivo como 50 o 25.75, o /cancel.",
+        "withdraw_insufficient": "Saldo insuficiente. Disponible: {balance:.2f}$. Ingresa un monto menor o /cancel.",
+        "withdraw_saved_wallet": "Tu billetera guardada:\n<code>{wallet}</code>\nRed: <b>{network}</b>\n\nO envía una nueva billetera y red opcional.",
+        "withdraw_no_saved": "No hay billetera guardada. Envía la dirección de billetera y red opcional (ej: 0xabc... ERC20).",
+        "withdraw_use_saved": "Usar billetera guardada",
+        "withdraw_no_saved_found": "No se encontró billetera guardada. Por favor envía la dirección de billetera.",
+        "withdraw_send_wallet": "Por favor envía la dirección de billetera y red opcional.",
+        "withdraw_looks_command": "Parece un comando. Envía solo la dirección de billetera y red opcional.",
+        "withdraw_invalid_wallet": "Esta dirección no parece válida. Envía 'yes' para guardar de todos modos o envía la dirección correcta.",
+        "withdraw_confirm_prompt": "Confirmar retiro:\nMonto: {amount:.2f}$\nBilletera: <code>{wallet}</code>\nRed: <b>{network}</b>",
+        "withdraw_confirm_yes": "✅ Confirmar",
+        "withdraw_confirm_no": "❌ Cancelar",
+        "withdraw_wallet_saved": "✅ Billetera guardada:\n<code>{wallet}</code>\nRed: {network}",
+        "withdraw_missing_data": "Datos de retiro faltantes. Comienza el retiro de nuevo.",
+        "withdraw_request_success": "🧾 Solicitud de Retiro Exitosa\nID de transacción: W-{ref}\nMonto: {amount:.2f} USDT ({network})\nBilletera: {wallet}\nRed: {network}\nEstado: Pendiente de aprobación\nFecha: {date}\n\nUna vez confirmado por el admin, tu retiro será procesado.",
     },
     "ar": {
         "main_menu_title": "📋 القائمة الرئيسية",
@@ -478,6 +562,34 @@ TRANSLATIONS = {
             "📊 <b>تحديثات فورية</b>\n\n"
             "تحتاج مساعدة؟ اتصل بالدعم في أي وقت!"
         ),
+        # Invest flow translations
+        "invest_enter_amount": "📈 أدخل المبلغ الذي تريد استثماره (أرقام فقط، مثال: 100.50). أرسل /cancel للإلغاء.",
+        "invest_invalid_amount": "مبلغ غير صحيح. أرسل رقماً موجباً مثل 100 أو 50.50، أو /cancel.",
+        "invest_send_proof": "📥 إيداع {amount:.2f}$\nأرسل إلى:\nالمحفظة: <code>{wallet}</code>\nالشبكة: <b>{network}</b>\n\nبعد الإرسال، قم بتحميل لقطة شاشة أو أرسل معرف المعاملة (txid).",
+        "invest_no_amount": "لا يوجد مبلغ استثمار معلق. ابدأ من جديد بـ /invest.",
+        "invest_upload_proof": "الرجاء تحميل لقطة شاشة أو إرسال txid، أو /cancel.",
+        "invest_confirm_prompt": "تم استلام الإثبات: <code>{proof}</code>\nإذا أرسلت بالضبط {amount:.2f}$، اضغط تأكيد. وإلا ألغِ.",
+        "invest_confirm_yes": "✅ أرسلت المبلغ الدقيق",
+        "invest_confirm_no": "❌ إلغاء",
+        "invest_missing_data": "بيانات مفقودة. أعد بدء عملية الاستثمار.",
+        "invest_request_success": "🧾 طلب الإيداع ناجح\nمعرف المعاملة: D-{ref}\nالمبلغ: {amount:.2f} USDT ({network})\nالمحفظة: {wallet}\nالشبكة: {network}\nالحالة: في انتظار الموافقة\nالتاريخ: {date}\n\nبمجرد التأكيد، سيتم تحديث رصيدك تلقائياً.",
+        # Withdraw flow translations
+        "withdraw_enter_amount": "💸 أدخل المبلغ الذي تريد سحبه (أرقام فقط). أرسل /cancel للإلغاء.",
+        "withdraw_invalid_amount": "مبلغ غير صحيح. أرسل رقماً موجباً مثل 50 أو 25.75، أو /cancel.",
+        "withdraw_insufficient": "رصيد غير كافٍ. المتاح: {balance:.2f}$. أدخل مبلغاً أصغر أو /cancel.",
+        "withdraw_saved_wallet": "محفظتك المحفوظة:\n<code>{wallet}</code>\nالشبكة: <b>{network}</b>\n\nأو أرسل محفظة جديدة وشبكة اختيارية.",
+        "withdraw_no_saved": "لا توجد محفظة محفوظة. أرسل عنوان المحفظة والشبكة الاختيارية (مثال: 0xabc... ERC20).",
+        "withdraw_use_saved": "استخدم المحفظة المحفوظة",
+        "withdraw_no_saved_found": "لم يتم العثور على محفظة محفوظة. الرجاء إرسال عنوان المحفظة.",
+        "withdraw_send_wallet": "الرجاء إرسال عنوان المحفظة والشبكة الاختيارية.",
+        "withdraw_looks_command": "يبدو كأمر. أرسل عنوان المحفظة والشبكة الاختيارية فقط.",
+        "withdraw_invalid_wallet": "هذا العنوان لا يبدو صحيحاً. أرسل 'yes' للحفظ على أي حال أو أرسل العنوان الصحيح.",
+        "withdraw_confirm_prompt": "تأكيد السحب:\nالمبلغ: {amount:.2f}$\nالمحفظة: <code>{wallet}</code>\nالشبكة: <b>{network}</b>",
+        "withdraw_confirm_yes": "✅ تأكيد",
+        "withdraw_confirm_no": "❌ إلغاء",
+        "withdraw_wallet_saved": "✅ تم حفظ المحفظة:\n<code>{wallet}</code>\nالشبكة: {network}",
+        "withdraw_missing_data": "بيانات السحب مفقودة. ابدأ السحب من جديد.",
+        "withdraw_request_success": "🧾 طلب السحب ناجح\nمعرف المعاملة: W-{ref}\nالمبلغ: {amount:.2f} USDT ({network})\nالمحفظة: {wallet}\nالشبكة: {network}\nالحالة: في انتظار الموافقة\nالتاريخ: {date}\n\nبمجرد تأكيد المسؤول، سيتم معالجة سحبك.",
     }
 }
 DEFAULT_LANG = "en"
@@ -1129,37 +1241,48 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
 # INVEST / WITHDRAW / ADMIN / HISTORY handlers
 # -----------------------
 async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.", reply_markup=None)
+    user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
+    await update.effective_message.reply_text(t(lang, "invest_enter_amount"), reply_markup=None)
     return INVEST_AMOUNT
 
 async def invest_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text("📈 Enter the amount you want to invest (numbers only, e.g., 100.50).")
+        await update.callback_query.message.reply_text(t(lang, "invest_enter_amount"))
     return INVEST_AMOUNT
 
 async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
+    user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
     text = (msg.text or "").strip()
     try:
         amount = float(text)
         if amount <= 0:
             raise ValueError()
     except Exception:
-        await msg.reply_text("Invalid amount. Send a positive number like 100 or 50.50, or /cancel.")
+        await msg.reply_text(t(lang, "invest_invalid_amount"))
         return INVEST_AMOUNT
     amount = round(amount, 2)
     context.user_data['invest_amount'] = amount
-    wallet_msg = (f"📥 Deposit {amount:.2f}$\nSend to wallet:\nWallet: <code>{MASTER_WALLET}</code>\nNetwork: <b>{MASTER_NETWORK}</b>\n\n"
-                  "After sending, upload a screenshot OR send the transaction hash (txid).")
+    wallet_msg = t(lang, "invest_send_proof", amount=amount, wallet=MASTER_WALLET, network=MASTER_NETWORK)
     await msg.reply_text(wallet_msg, parse_mode="HTML")
     return INVEST_PROOF
 
 async def invest_proof_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
+    user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
     amount = context.user_data.get('invest_amount')
     if amount is None:
-        await msg.reply_text("No pending invest amount. Start again with /invest.")
+        await msg.reply_text(t(lang, "invest_no_amount"))
         return ConversationHandler.END
     proof_label = None
     if msg.photo:
@@ -1170,14 +1293,16 @@ async def invest_proof_received(update: Update, context: ContextTypes.DEFAULT_TY
         if text:
             proof_label = text
     if not proof_label:
-        await msg.reply_text("Please upload a screenshot or send the txid, or /cancel.")
+        await msg.reply_text(t(lang, "invest_upload_proof"))
         return INVEST_PROOF
     context.user_data['invest_proof'] = proof_label
     await msg.reply_text(
-        f"Proof received: <code>{proof_label}</code>\nIf you sent exactly {amount:.2f}$, press confirm. Otherwise Cancel.",
+        t(lang, "invest_confirm_prompt", proof=proof_label, amount=amount),
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ I sent the exact amount", callback_data="invest_confirm_yes"),
-                                           InlineKeyboardButton("❌ Cancel", callback_data="invest_confirm_no")]])
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton(t(lang, "invest_confirm_yes"), callback_data="invest_confirm_yes"),
+            InlineKeyboardButton(t(lang, "invest_confirm_no"), callback_data="invest_confirm_no")
+        ]])
     )
     return INVEST_CONFIRM
 
@@ -1186,11 +1311,13 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     if query:
         await query.answer()
     user_id = query.from_user.id if query else update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
     amount = context.user_data.get('invest_amount')
     proof = context.user_data.get('invest_proof')
     if amount is None or proof is None:
         target = query.message if query else update.effective_message
-        await target.reply_text("Missing data. Restart invest flow.", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
+        await target.reply_text(t(lang, "invest_missing_data"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
         context.user_data.pop('invest_amount', None)
         context.user_data.pop('invest_proof', None)
         return ConversationHandler.END
@@ -1211,16 +1338,7 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
 
     now = datetime.utcnow()
     pdt_str = (now.replace(tzinfo=timezone.utc) - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M (PDT)")
-    deposit_request_text = (
-        "🧾 Deposit Request Successful\n"
-        f"Transaction ID, D-{tx_ref}\n"
-        f"Amount, {amount:.2f} USDT ({MASTER_NETWORK})\n"
-        f"Wallet, {MASTER_WALLET}\n"
-        f"Network, {MASTER_NETWORK}\n"
-        f"Status: Pending Approval\n"
-        f"Date: {pdt_str}\n\n"
-        "Once confirmed, your balance will be updated automatically."
-    )
+    deposit_request_text = t(lang, "invest_request_success", ref=tx_ref, amount=amount, network=MASTER_NETWORK, wallet=MASTER_WALLET, date=pdt_str)
 
     try:
         if query:
@@ -1253,49 +1371,59 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
     context.user_data.pop('invest_proof', None)
     return ConversationHandler.END
 
-# Withdraw handlers (unchanged other than admin username inclusion)
+# Withdraw handlers with full multilingual support
 async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.effective_message.reply_text("💸 Enter the amount you want to withdraw (numbers only). Send /cancel to abort.")
+    user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
+    await update.effective_message.reply_text(t(lang, "withdraw_enter_amount"))
     return WITHDRAW_AMOUNT
 
 async def withdraw_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text("💸 Enter the amount you want to withdraw (numbers only).")
+        await update.callback_query.message.reply_text(t(lang, "withdraw_enter_amount"))
     return WITHDRAW_AMOUNT
 
 async def withdraw_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
+    user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
     text = (msg.text or "").strip()
     try:
         amount = float(text)
         if amount <= 0:
             raise ValueError()
     except Exception:
-        await msg.reply_text("Invalid amount. Send a positive number like 50 or 25.75, or /cancel.")
+        await msg.reply_text(t(lang, "withdraw_invalid_amount"))
         return WITHDRAW_AMOUNT
     amount = round(amount, 2)
-    user_id = update.effective_user.id
     context.user_data['withdraw_amount'] = amount
     async with async_session() as session:
         user = await get_user(session, user_id)
     balance = float(user.get('balance') or 0)
     if amount > balance:
-        await msg.reply_text(f"Insufficient balance. Available: {balance:.2f}$. Enter smaller amount or /cancel.")
+        await msg.reply_text(t(lang, "withdraw_insufficient", balance=balance))
         context.user_data.pop('withdraw_amount', None)
         return WITHDRAW_AMOUNT
     saved_wallet = user.get('wallet_address')
     saved_network = user.get('wallet_network')
     if saved_wallet:
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("Use saved wallet", callback_data="withdraw_use_saved")]])
-        await msg.reply_text(f"Your saved wallet:\n<code>{saved_wallet}</code>\nNetwork: <b>{saved_network}</b>\n\nOr send a new wallet and optional network.", parse_mode="HTML", reply_markup=kb)
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, "withdraw_use_saved"), callback_data="withdraw_use_saved")]])
+        await msg.reply_text(t(lang, "withdraw_saved_wallet", wallet=saved_wallet, network=saved_network), parse_mode="HTML", reply_markup=kb)
     else:
-        await msg.reply_text("No saved wallet. Send wallet address and optional network (e.g., 0xabc... ERC20).")
+        await msg.reply_text(t(lang, "withdraw_no_saved"))
     return WITHDRAW_WALLET
 
 async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     user_id = update.effective_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
 
     if update.callback_query and update.callback_query.data == "withdraw_use_saved":
         await update.callback_query.answer()
@@ -1304,21 +1432,21 @@ async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT
         wallet_address = user.get('wallet_address')
         wallet_network = user.get('wallet_network')
         if not wallet_address:
-            await msg.reply_text("No saved wallet found. Please send wallet address.")
+            await msg.reply_text(t(lang, "withdraw_no_saved_found"))
             return WITHDRAW_WALLET
     else:
         text = (msg.text or "").strip()
         if not text:
-            await msg.reply_text("Please send wallet address and optional network.")
+            await msg.reply_text(t(lang, "withdraw_send_wallet"))
             return WITHDRAW_WALLET
         parts = text.split()
         wallet_address = parts[0]
         wallet_network = parts[1] if len(parts) > 1 else ''
         if wallet_address.startswith('/'):
-            await msg.reply_text("Looks like a command. Send only the wallet address and optional network.")
+            await msg.reply_text(t(lang, "withdraw_looks_command"))
             return WITHDRAW_WALLET
         if not is_probable_wallet(wallet_address):
-            await msg.reply_text("This address doesn't look valid. Send 'yes' to save anyway or send correct address.")
+            await msg.reply_text(t(lang, "withdraw_invalid_wallet"))
             context.user_data['pending_wallet_candidate'] = (wallet_address, wallet_network)
             return WITHDRAW_WALLET
         async with async_session() as session:
@@ -1332,17 +1460,24 @@ async def withdraw_wallet_received(update: Update, context: ContextTypes.DEFAULT
             user = await get_user(session, user_id)
             balance = float(user.get('balance') or 0)
             if amount > balance:
-                await msg.reply_text(f"Insufficient balance. Available: {balance:.2f}$.", reply_markup=build_main_menu_keyboard())
+                await msg.reply_text(t(lang, "withdraw_insufficient", balance=balance), reply_markup=build_main_menu_keyboard())
                 context.user_data.pop('withdraw_amount', None)
                 return ConversationHandler.END
             new_balance = balance - amount
             new_in_process = float(user.get('balance_in_process') or 0) + amount
             await update_user(session, user_id, balance=new_balance, balance_in_process=new_in_process)
 
-        await msg.reply_text(f"Confirm withdrawal:\nAmount: {amount:.2f}$\nWallet: <code>{wallet_address}</code>\nNetwork: <b>{wallet_network}</b>", parse_mode="HTML", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Confirm", callback_data="withdraw_confirm_yes"), InlineKeyboardButton("❌ Cancel", callback_data="withdraw_confirm_no")]]))
+        await msg.reply_text(
+            t(lang, "withdraw_confirm_prompt", amount=amount, wallet=wallet_address, network=wallet_network),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton(t(lang, "withdraw_confirm_yes"), callback_data="withdraw_confirm_yes"),
+                InlineKeyboardButton(t(lang, "withdraw_confirm_no"), callback_data="withdraw_confirm_no")
+            ]])
+        )
         return WITHDRAW_CONFIRM
     else:
-        await msg.reply_text(f"✅ Wallet saved:\n<code>{wallet_address}</code>\nNetwork: {wallet_network}", parse_mode="HTML", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
+        await msg.reply_text(t(lang, "withdraw_wallet_saved", wallet=wallet_address, network=wallet_network), parse_mode="HTML", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
         context.user_data.pop('withdraw_wallet', None)
         context.user_data.pop('withdraw_network', None)
         return ConversationHandler.END
@@ -1351,12 +1486,14 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
     amount = context.user_data.get('withdraw_amount')
     wallet = context.user_data.get('withdraw_wallet')
     network = context.user_data.get('withdraw_network', '')
 
     if amount is None or not wallet:
-        await query.message.reply_text("Missing withdrawal data. Start withdraw again.", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
+        await query.message.reply_text(t(lang, "withdraw_missing_data"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
         context.user_data.pop('withdraw_amount', None)
         context.user_data.pop('withdraw_wallet', None)
         context.user_data.pop('withdraw_network', None)
@@ -1378,16 +1515,7 @@ async def withdraw_confirm_callback(update: Update, context: ContextTypes.DEFAUL
 
     now = datetime.utcnow()
     pdt_str = (now.replace(tzinfo=timezone.utc) - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M (PDT)")
-    withdraw_request_text = (
-        "🧾 Withdrawal Request Successful\n"
-        f"Transaction ID, W-{tx_ref}\n"
-        f"Amount, {amount:.2f} USDT ({network or 'N/A'})\n"
-        f"Wallet, {wallet}\n"
-        f"Network, {network or 'N/A'}\n"
-        f"Status: Pending Approval\n"
-        f"Date: {pdt_str}\n\n"
-        "Once confirmed by admin, your withdrawal will be processed."
-    )
+    withdraw_request_text = t(lang, "withdraw_request_success", ref=tx_ref, amount=amount, network=network or 'N/A', wallet=wallet, date=pdt_str)
 
     try:
         await query.message.reply_text(withdraw_request_text, parse_mode="HTML")
