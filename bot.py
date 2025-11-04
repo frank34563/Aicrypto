@@ -160,6 +160,17 @@ class Config(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class DepositWallet(Base):
+    __tablename__ = 'deposit_wallets'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    coin = Column(String)  # e.g., 'USDT', 'BTC', 'ETH'
+    network = Column(String)  # e.g., 'TRC20', 'ERC20', 'BTC'
+    address = Column(String)
+    is_primary = Column(Integer, default=0)  # 1 for primary, 0 for secondary
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 # DB init helpers
 async def _create_all_with_timeout(engine_to_use):
     async with engine_to_use.begin() as conn:
@@ -286,6 +297,125 @@ async def set_config(session: AsyncSession, key: str, value: str):
         session.add(config)
     await session.commit()
 
+# Deposit wallet helpers
+async def get_deposit_wallets(session: AsyncSession, coin: Optional[str] = None) -> List[Dict]:
+    """Get all deposit wallets, optionally filtered by coin"""
+    if coin:
+        result = await session.execute(
+            select(DepositWallet).where(DepositWallet.coin == coin.upper()).order_by(DepositWallet.is_primary.desc(), DepositWallet.created_at)
+        )
+    else:
+        result = await session.execute(select(DepositWallet).order_by(DepositWallet.coin, DepositWallet.is_primary.desc()))
+    wallets = result.scalars().all()
+    return [
+        {
+            'id': w.id,
+            'coin': w.coin,
+            'network': w.network,
+            'address': w.address,
+            'is_primary': bool(w.is_primary),
+            'created_at': w.created_at
+        }
+        for w in wallets
+    ]
+
+async def get_primary_deposit_wallet(session: AsyncSession, coin: str) -> Optional[Dict]:
+    """Get the primary deposit wallet for a specific coin"""
+    result = await session.execute(
+        select(DepositWallet).where(
+            DepositWallet.coin == coin.upper(),
+            DepositWallet.is_primary == 1
+        )
+    )
+    wallet = result.scalar_one_or_none()
+    if wallet:
+        return {
+            'id': wallet.id,
+            'coin': wallet.coin,
+            'network': wallet.network,
+            'address': wallet.address,
+            'is_primary': True
+        }
+    
+    # If no primary wallet, return the first wallet for this coin
+    result = await session.execute(
+        select(DepositWallet).where(DepositWallet.coin == coin.upper()).order_by(DepositWallet.created_at)
+    )
+    wallet = result.scalar_one_or_none()
+    if wallet:
+        return {
+            'id': wallet.id,
+            'coin': wallet.coin,
+            'network': wallet.network,
+            'address': wallet.address,
+            'is_primary': False
+        }
+    return None
+
+async def set_deposit_wallet(session: AsyncSession, coin: str, network: str, address: str, is_primary: bool = False):
+    """Add or update a deposit wallet"""
+    coin = coin.upper()
+    
+    # If setting as primary, unmark all other wallets for this coin
+    if is_primary:
+        await session.execute(
+            sa_update(DepositWallet).where(DepositWallet.coin == coin).values(is_primary=0)
+        )
+    
+    # Check if wallet already exists
+    result = await session.execute(
+        select(DepositWallet).where(
+            DepositWallet.coin == coin,
+            DepositWallet.network == network,
+            DepositWallet.address == address
+        )
+    )
+    existing = result.scalar_one_or_none()
+    
+    if existing:
+        existing.is_primary = 1 if is_primary else 0
+        existing.updated_at = datetime.utcnow()
+    else:
+        wallet = DepositWallet(
+            coin=coin,
+            network=network,
+            address=address,
+            is_primary=1 if is_primary else 0
+        )
+        session.add(wallet)
+    
+    await session.commit()
+
+async def mark_primary_deposit_wallet(session: AsyncSession, wallet_id: int):
+    """Mark a deposit wallet as primary"""
+    result = await session.execute(select(DepositWallet).where(DepositWallet.id == wallet_id))
+    wallet = result.scalar_one_or_none()
+    
+    if not wallet:
+        return False
+    
+    # Unmark all other wallets for this coin
+    await session.execute(
+        sa_update(DepositWallet).where(DepositWallet.coin == wallet.coin).values(is_primary=0)
+    )
+    
+    # Mark this wallet as primary
+    wallet.is_primary = 1
+    wallet.updated_at = datetime.utcnow()
+    await session.commit()
+    return True
+
+async def delete_deposit_wallet(session: AsyncSession, wallet_id: int):
+    """Delete a deposit wallet"""
+    result = await session.execute(select(DepositWallet).where(DepositWallet.id == wallet_id))
+    wallet = result.scalar_one_or_none()
+    
+    if wallet:
+        await session.delete(wallet)
+        await session.commit()
+        return True
+    return False
+
 # Binance price cache with TTL
 _binance_price_cache = {}  # {symbol: (price, timestamp)}
 _binance_cache_lock = asyncio.Lock()
@@ -325,7 +455,7 @@ async def fetch_binance_price(symbol: str) -> Optional[float]:
             return None
 
 # Conversation states
-INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, WITHDRAW_CONFIRM, HISTORY_PAGE, HISTORY_DETAILS = range(8)
+INVEST_AMOUNT, INVEST_NETWORK, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, WITHDRAW_CONFIRM, HISTORY_PAGE, HISTORY_DETAILS = range(9)
 
 # -----------------------
 # I18N: translations and helpers
@@ -1346,9 +1476,89 @@ async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_T
         return INVEST_AMOUNT
     amount = round(amount, 2)
     context.user_data['invest_amount'] = amount
-    wallet_msg = t(lang, "invest_send_proof", amount=amount, wallet=MASTER_WALLET, network=MASTER_NETWORK)
-    await msg.reply_text(wallet_msg, parse_mode="HTML")
+    
+    # Show network selection keyboard
+    keyboard = [
+        [InlineKeyboardButton("💵 USDT (TRC20)", callback_data="invest_network_USDT")],
+        [InlineKeyboardButton("₿ Bitcoin (BTC)", callback_data="invest_network_BTC")],
+        [InlineKeyboardButton("◎ Solana (SOL)", callback_data="invest_network_SOLANA")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    network_msg = f"💰 Amount: {amount:.2f}$\n\nPlease select the network you want to use for deposit:"
+    await msg.reply_text(network_msg, reply_markup=reply_markup)
+    return INVEST_NETWORK
+
+
+async def invest_network_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
+    
+    amount = context.user_data.get('invest_amount')
+    if amount is None:
+        await query.message.reply_text(t(lang, "invest_no_amount"))
+        return ConversationHandler.END
+    
+    # Extract selected coin from callback data (e.g., "invest_network_USDT" -> "USDT")
+    coin = query.data.replace("invest_network_", "")
+    context.user_data['invest_coin'] = coin
+    
+    # Map SOLANA to SOL for consistency
+    coin_lookup = coin if coin != "SOLANA" else "SOL"
+    
+    # Get deposit wallet for selected coin
+    async with async_session() as session:
+        deposit_wallet = await get_primary_deposit_wallet(session, coin_lookup)
+    
+    # Fall back to MASTER_WALLET if no wallet configured (only for USDT)
+    if deposit_wallet:
+        wallet = deposit_wallet['address']
+        network = deposit_wallet['network']
+    else:
+        if coin == "USDT":
+            wallet = MASTER_WALLET
+            network = MASTER_NETWORK
+        else:
+            await query.message.reply_text(
+                f"❌ No deposit wallet configured for {coin}.\n"
+                f"Please contact admin or choose a different network.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("« Back to network selection", callback_data="invest_back_to_network")
+                ]])
+            )
+            return INVEST_NETWORK
+    
+    # Display network name based on coin
+    network_display_name = {
+        "USDT": "USDT (TRC20)",
+        "BTC": "Bitcoin (BTC)",
+        "SOLANA": "Solana (SOL)",
+        "SOL": "Solana (SOL)"
+    }.get(coin, coin)
+    
+    wallet_msg = (
+        f"📥 Deposit {amount:.2f}$ using {network_display_name}\n\n"
+        f"Send to wallet:\n"
+        f"Wallet: <code>{wallet}</code>\n"
+        f"Network: <b>{network}</b>\n\n"
+        f"After sending, upload a screenshot OR send the transaction hash (txid)."
+    )
+    
+    try:
+        await query.message.edit_text(wallet_msg, parse_mode="HTML")
+    except Exception:
+        await query.message.reply_text(wallet_msg, parse_mode="HTML")
+    
+    # Store wallet and network in user_data for later use
+    context.user_data['invest_wallet'] = wallet
+    context.user_data['invest_network'] = network
+    
     return INVEST_PROOF
+
 
 async def invest_proof_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -1395,8 +1605,27 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
         await target.reply_text(t(lang, "invest_missing_data"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
         context.user_data.pop('invest_amount', None)
         context.user_data.pop('invest_proof', None)
+        context.user_data.pop('invest_coin', None)
+        context.user_data.pop('invest_wallet', None)
+        context.user_data.pop('invest_network', None)
         return ConversationHandler.END
 
+    # Get wallet and network from user_data (stored during network selection)
+    wallet = context.user_data.get('invest_wallet')
+    network = context.user_data.get('invest_network')
+    
+    # If not in user_data (backward compatibility), fall back to USDT
+    if not wallet or not network:
+        async with async_session() as session:
+            deposit_wallet = await get_primary_deposit_wallet(session, 'USDT')
+            
+            if deposit_wallet:
+                wallet = deposit_wallet['address']
+                network = deposit_wallet['network']
+            else:
+                wallet = MASTER_WALLET
+                network = MASTER_NETWORK
+    
     async with async_session() as session:
         tx_db_id, tx_ref = await log_transaction(
             session,
@@ -1406,14 +1635,14 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
             amount=amount,
             status='pending',
             proof=str(proof),
-            wallet=MASTER_WALLET,
-            network=MASTER_NETWORK,
+            wallet=wallet,
+            network=network,
             created_at=datetime.utcnow()
         )
 
     now = datetime.utcnow()
     pdt_str = (now.replace(tzinfo=timezone.utc) - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M (PDT)")
-    deposit_request_text = t(lang, "invest_request_success", ref=tx_ref, amount=amount, network=MASTER_NETWORK, wallet=MASTER_WALLET, date=pdt_str)
+    deposit_request_text = t(lang, "invest_request_success", ref=tx_ref, amount=amount, network=network, wallet=wallet, date=pdt_str)
 
     try:
         if query:
@@ -1444,6 +1673,9 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
 
     context.user_data.pop('invest_amount', None)
     context.user_data.pop('invest_proof', None)
+    context.user_data.pop('invest_coin', None)
+    context.user_data.pop('invest_wallet', None)
+    context.user_data.pop('invest_network', None)
     return ConversationHandler.END
 
 # Withdraw handlers with full multilingual support
@@ -2232,6 +2464,122 @@ async def cmd_set_trade_range(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await post_admin_log(context.bot, f"Admin set trade range to {min_percent}% - {max_percent}%")
 
+async def cmd_set_deposit_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /set_deposit_wallet <coin> <network> <address> [primary]"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    args = context.args
+    if len(args) < 3:
+        await update.effective_message.reply_text(
+            "Usage: /set_deposit_wallet <coin> <network> <address> [primary]\n"
+            "Example: /set_deposit_wallet BTC BTC bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh primary\n"
+            "Example: /set_deposit_wallet USDT TRC20 TAbc123... primary"
+        )
+        return
+    
+    coin = args[0].upper()
+    network = args[1].upper()
+    address = args[2]
+    is_primary = len(args) > 3 and args[3].lower() == 'primary'
+    
+    async with async_session() as session:
+        await set_deposit_wallet(session, coin, network, address, is_primary)
+    
+    primary_text = " (marked as primary)" if is_primary else ""
+    await update.effective_message.reply_text(
+        f"✅ Deposit wallet added{primary_text}:\n"
+        f"Coin: {coin}\n"
+        f"Network: {network}\n"
+        f"Address: <code>{address}</code>",
+        parse_mode="HTML"
+    )
+    await post_admin_log(context.bot, f"Admin set deposit wallet: {coin}/{network} = {address}{primary_text}")
+
+async def cmd_list_deposit_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /list_deposit_wallets [coin]"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    args = context.args
+    coin = args[0].upper() if args else None
+    
+    async with async_session() as session:
+        wallets = await get_deposit_wallets(session, coin)
+    
+    if not wallets:
+        coin_text = f" for {coin}" if coin else ""
+        await update.effective_message.reply_text(f"No deposit wallets configured{coin_text}.")
+        return
+    
+    lines = ["💳 Deposit Wallets:\n"]
+    for w in wallets:
+        primary_mark = " ⭐ PRIMARY" if w['is_primary'] else ""
+        lines.append(
+            f"ID: {w['id']}{primary_mark}\n"
+            f"  Coin: {w['coin']}\n"
+            f"  Network: {w['network']}\n"
+            f"  Address: <code>{w['address']}</code>\n"
+        )
+    
+    await update.effective_message.reply_text("\n".join(lines), parse_mode="HTML")
+
+async def cmd_mark_primary_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /mark_primary_wallet <wallet_id>"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.effective_message.reply_text(
+            "Usage: /mark_primary_wallet <wallet_id>\n"
+            "Use /list_deposit_wallets to see wallet IDs"
+        )
+        return
+    
+    wallet_id = int(args[0])
+    
+    async with async_session() as session:
+        success = await mark_primary_deposit_wallet(session, wallet_id)
+    
+    if success:
+        await update.effective_message.reply_text(f"✅ Wallet {wallet_id} marked as primary")
+        await post_admin_log(context.bot, f"Admin marked wallet {wallet_id} as primary")
+    else:
+        await update.effective_message.reply_text(f"❌ Wallet {wallet_id} not found")
+
+async def cmd_remove_deposit_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /remove_deposit_wallet <wallet_id>"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.effective_message.reply_text(
+            "Usage: /remove_deposit_wallet <wallet_id>\n"
+            "Use /list_deposit_wallets to see wallet IDs"
+        )
+        return
+    
+    wallet_id = int(args[0])
+    
+    async with async_session() as session:
+        success = await delete_deposit_wallet(session, wallet_id)
+    
+    if success:
+        await update.effective_message.reply_text(f"✅ Wallet {wallet_id} removed")
+        await post_admin_log(context.bot, f"Admin removed wallet {wallet_id}")
+    else:
+        await update.effective_message.reply_text(f"❌ Wallet {wallet_id} not found")
+
 async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /admin_cmds - Show all admin commands"""
     user_id = update.effective_user.id
@@ -2261,6 +2609,11 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/set_user_trade <user_id> <pair> <percent> - Set user config\n"
         "/trading_status - Show trading config\n"
         "/trading_summary [date] - View daily summary\n\n"
+        "**Deposit Wallets:**\n"
+        "/set_deposit_wallet <coin> <network> <address> [primary] - Add/update wallet\n"
+        "/list_deposit_wallets [coin] - List all deposit wallets\n"
+        "/mark_primary_wallet <id> - Mark wallet as primary\n"
+        "/remove_deposit_wallet <id> - Remove a wallet\n\n"
         "**Admin:**\n"
         "/admin_cmds - Show this message\n"
         "/pending - Show pending transactions"
@@ -2629,6 +2982,7 @@ def main():
         ],
         states={
             INVEST_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, invest_amount_received)],
+            INVEST_NETWORK: [CallbackQueryHandler(invest_network_selected, pattern='^invest_network_')],
             INVEST_PROOF: [MessageHandler(filters.PHOTO | (filters.TEXT & ~filters.COMMAND), invest_proof_received)],
             INVEST_CONFIRM: [CallbackQueryHandler(invest_confirm_callback, pattern='^invest_confirm_yes$'), CallbackQueryHandler(invest_confirm_callback, pattern='^invest_confirm_no$')],
             WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_amount_received)],
@@ -2689,6 +3043,12 @@ def main():
     application.add_handler(CommandHandler("use_binance_on", cmd_use_binance_on))
     application.add_handler(CommandHandler("use_binance_off", cmd_use_binance_off))
     application.add_handler(CommandHandler("binance_status", cmd_binance_status))
+    
+    # Deposit wallet commands
+    application.add_handler(CommandHandler("set_deposit_wallet", cmd_set_deposit_wallet))
+    application.add_handler(CommandHandler("list_deposit_wallets", cmd_list_deposit_wallets))
+    application.add_handler(CommandHandler("mark_primary_wallet", cmd_mark_primary_wallet))
+    application.add_handler(CommandHandler("remove_deposit_wallet", cmd_remove_deposit_wallet))
     
     # Admin helper commands
     application.add_handler(CommandHandler("admin_cmds", cmd_admin_cmds))
