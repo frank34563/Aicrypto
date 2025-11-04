@@ -337,12 +337,14 @@ TRANSLATIONS = {
         "settings_language": "🌍 Language",
         "change_language": "Change Language",
         "settings_wallet": "💳 Set/Update Withdrawal Wallet",
+        "select_option": "Select an option:",
+        "back_to_menu": "« Back to Menu",
         "lang_auto": "🔄 Auto (from Telegram)",
         "lang_en": "🇬🇧 English",
         "lang_fr": "🇫🇷 Français",
         "lang_es": "🇪🇸 Español",
         "lang_ar": "🇸🇦 العربية",
-        "lang_set_success": "✅ Language updated to {lang}",
+        "lang_set_success": "✅ Language changed successfully!",
         "lang_current": "Current language: {lang}",
         "welcome_text": (
             "🎉 <b>Welcome to AiCrypto Bot!</b>\n\n"
@@ -372,12 +374,14 @@ TRANSLATIONS = {
         "settings_language": "🌍 Langue",
         "change_language": "Changer la langue",
         "settings_wallet": "💳 Définir/Mettre à jour le portefeuille de retrait",
+        "select_option": "Sélectionnez une option:",
+        "back_to_menu": "« Retour au menu",
         "lang_auto": "🔄 Auto (Telegram)",
         "lang_en": "🇬🇧 Anglais",
         "lang_fr": "🇫🇷 Français",
         "lang_es": "🇪🇸 Espagnol",
         "lang_ar": "🇸🇦 العربية",
-        "lang_set_success": "✅ Langue mise à jour en {lang}",
+        "lang_set_success": "✅ Langue modifiée avec succès!",
         "lang_current": "Langue actuelle : {lang}",
         "welcome_text": (
             "🎉 <b>Bienvenue sur AiCrypto Bot!</b>\n\n"
@@ -407,12 +411,14 @@ TRANSLATIONS = {
         "settings_language": "🌍 Idioma",
         "change_language": "Cambiar idioma",
         "settings_wallet": "💳 Establecer/Actualizar billetera de retiro",
+        "select_option": "Selecciona una opción:",
+        "back_to_menu": "« Volver al menú",
         "lang_auto": "🔄 Auto (Telegram)",
         "lang_en": "🇬🇧 Inglés",
         "lang_fr": "🇫🇷 Francés",
         "lang_es": "🇪🇸 Español",
         "lang_ar": "🇸🇦 العربية",
-        "lang_set_success": "✅ Idioma actualizado a {lang}",
+        "lang_set_success": "✅ ¡Idioma cambiado exitosamente!",
         "lang_current": "Idioma actual: {lang}",
         "welcome_text": (
             "🎉 <b>¡Bienvenido a AiCrypto Bot!</b>\n\n"
@@ -442,12 +448,14 @@ TRANSLATIONS = {
         "settings_language": "🌍 اللغة",
         "change_language": "تغيير اللغة",
         "settings_wallet": "💳 تعيين/تحديث محفظة السحب",
+        "select_option": "اختر خياراً:",
+        "back_to_menu": "« العودة إلى القائمة",
         "lang_auto": "🔄 تلقائي (من تيليجرام)",
         "lang_en": "🇬🇧 الإنجليزية",
         "lang_fr": "🇫🇷 الفرنسية",
         "lang_es": "🇪🇸 الإسبانية",
         "lang_ar": "🇸🇦 العربية",
-        "lang_set_success": "✅ تم تحديث اللغة إلى {lang}",
+        "lang_set_success": "✅ تم تغيير اللغة بنجاح!",
         "lang_current": "اللغة الحالية: {lang}",
         "welcome_text": (
             "🎉 <b>مرحباً بك في AiCrypto Bot!</b>\n\n"
@@ -526,15 +534,15 @@ def _compact_pad(label: str, target: int = 10) -> str:
 
 def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang: str = DEFAULT_LANG) -> InlineKeyboardMarkup:
     labels = {
-        "balance": "💰 " + {"en":"Balance","fr":"Solde","es":"Saldo"}.get(lang, "Balance"),
-        "invest": "📈 " + {"en":"Invest","fr":"Investir","es":"Invertir"}.get(lang, "Invest"),
-        "history": "🧾 " + {"en":"History","fr":"Historique","es":"Historial"}.get(lang, "History"),
-        "withdraw": "💸 " + {"en":"Withdraw","fr":"Retirer","es":"Retirar"}.get(lang, "Withdraw"),
-        "referrals": "👥 " + {"en":"Referrals","fr":"Fermes","es":"Referidos"}.get(lang, "Referrals"),
-        "settings": "⚙️ " + {"en":"Settings","fr":"Paramètres","es":"Ajustes"}.get(lang, "Settings"),
-        "information": "ℹ️ " + {"en":"Information","fr":"Information","es":"Información"}.get(lang, "Information"),
-        "help": "❓ " + {"en":"Help","fr":"Aide","es":"Ayuda"}.get(lang, "Help"),
-        "exit": "⨉ " + {"en":"Exit","fr":"Quitter","es":"Salir"}.get(lang, "Exit"),
+        "balance": "💰 " + {"en":"Balance","fr":"Solde","es":"Saldo","ar":"الرصيد"}.get(lang, "Balance"),
+        "invest": "📈 " + {"en":"Invest","fr":"Investir","es":"Invertir","ar":"استثمر"}.get(lang, "Invest"),
+        "history": "🧾 " + {"en":"History","fr":"Historique","es":"Historial","ar":"السجل"}.get(lang, "History"),
+        "withdraw": "💸 " + {"en":"Withdraw","fr":"Retirer","es":"Retirar","ar":"سحب"}.get(lang, "Withdraw"),
+        "referrals": "👥 " + {"en":"Referrals","fr":"Fermes","es":"Referidos","ar":"الإحالات"}.get(lang, "Referrals"),
+        "settings": "⚙️ " + {"en":"Settings","fr":"Paramètres","es":"Ajustes","ar":"الإعدادات"}.get(lang, "Settings"),
+        "information": "ℹ️ " + {"en":"Information","fr":"Information","es":"Información","ar":"المعلومات"}.get(lang, "Information"),
+        "help": "❓ " + {"en":"Help","fr":"Aide","es":"Ayuda","ar":"مساعدة"}.get(lang, "Help"),
+        "exit": "⨉ " + {"en":"Exit","fr":"Quitter","es":"Salir","ar":"خروج"}.get(lang, "Exit"),
     }
 
     if not full_two_column:
@@ -1023,7 +1031,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("📋 Copy Link", switch_inline_query=referral_link)],
-                [InlineKeyboardButton("« Back to Menu", callback_data="menu_exit")]
+                [InlineKeyboardButton(t(lang,"back_to_menu"), callback_data="menu_exit")]
             ])
             try:
                 await query.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
@@ -1042,10 +1050,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb = InlineKeyboardMarkup([
                 [InlineKeyboardButton("🌍 " + t(lang,"change_language"), callback_data="settings_language")],
                 [InlineKeyboardButton(t(lang,"settings_wallet"), callback_data="settings_set_wallet")],
-                [InlineKeyboardButton("« Back to Menu", callback_data="menu_exit")]
+                [InlineKeyboardButton(t(lang,"back_to_menu"), callback_data="menu_exit")]
             ])
             await query.edit_message_text(
-                t(lang, "settings_title") + "\n\nSelect an option:", 
+                t(lang, "settings_title") + "\n\n" + t(lang, "select_option"), 
                 reply_markup=kb
             )
         except Exception as e:
@@ -1104,7 +1112,7 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
         f"👤 <b>Manager:</b> {SUPPORT_USER}"
     )
     
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("« Back to Menu", callback_data="menu_exit")]])
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(lang,"back_to_menu"), callback_data="menu_exit")]])
     
     try:
         if hasattr(query_or_message, "message") and hasattr(query_or_message, "data"):
@@ -2297,12 +2305,26 @@ async def language_callback_handler(update: Update, context: ContextTypes.DEFAUL
 
         effective_lang = await get_user_language(session, user_id, update=update)
 
-    # Show success message and redirect to main menu with translated text
-    success_msg = t(effective_lang, "lang_set_success", lang=LANG_DISPLAY.get(effective_lang, effective_lang))
-    welcome_text = t(effective_lang, "welcome_text")
+    # Show clear success message
+    success_msg = t(effective_lang, "lang_set_success")
     
-    # Combine success message with translated main menu
-    full_text = success_msg + "\n\n" + welcome_text + "\n\n" + t(effective_lang, "main_menu_title")
+    try:
+        await query.message.edit_text(
+            success_msg,
+            parse_mode="HTML"
+        )
+    except Exception:
+        await query.message.reply_text(
+            success_msg,
+            parse_mode="HTML"
+        )
+    
+    # Wait a moment for user to see the message
+    await asyncio.sleep(1)
+    
+    # Now show the main menu in the new language
+    welcome_text = t(effective_lang, "welcome_text")
+    full_text = welcome_text + "\n\n" + t(effective_lang, "main_menu_title")
     
     try:
         await query.message.edit_text(
