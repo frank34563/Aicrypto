@@ -79,6 +79,7 @@ USE_BINANCE = True  # Can be toggled by admin commands
 GLOBAL_DAILY_PERCENT = 1.375  # default 1.375% daily (mid-range between 1.25% and 1.5%)
 GLOBAL_TRADE_PERCENT = 0.15  # default 0.15% per trade (mid-range between 0.05% and 0.25%)
 GLOBAL_TRADES_PER_DAY = 32  # default 32 trades per day (45 minute frequency)
+GLOBAL_NEGATIVE_TRADES_PER_DAY = 5  # default 5 negative trades per day
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -591,6 +592,15 @@ async def daily_profit_job():
 # -----------------------
 # Price simulation (in-memory)
 # -----------------------
+# Expanded list of diverse trading pairs for random selection
+TRADING_PAIRS = [
+    'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT',
+    'DOGEUSDT', 'SOLUSDT', 'DOTUSDT', 'MATICUSDT', 'LTCUSDT',
+    'AVAXUSDT', 'LINKUSDT', 'ATOMUSDT', 'UNIUSDT', 'XLMUSDT',
+    'ALGOUSDT', 'VETUSDT', 'FILUSDT', 'TRXUSDT', 'ETCUSDT'
+]
+
+# Price simulation pairs (for fallback when Binance API unavailable)
 PRICE_PAIRS = {
     "USDT/BTC": 0.000030,
     "USDT/ETH": 0.00045,
@@ -608,7 +618,8 @@ def simulate_price_walk(pair: str) -> float:
     return PRICE_PAIRS[pair]
 
 def pick_random_pair() -> str:
-    return random.choice(list(PRICE_PAIRS.keys()))
+    """Pick a random trading pair from the diverse list"""
+    return random.choice(TRADING_PAIRS)
 
 # Trading control
 TRADING_ENABLED = True
@@ -620,6 +631,7 @@ _trading_job = None
 
 # -----------------------
 # Trading job: fetch Binance prices with cache, use per-user config, update balances
+# Supports both positive and negative trades based on admin configuration
 # -----------------------
 async def trading_job():
     if not TRADING_ENABLED:
@@ -633,6 +645,7 @@ async def trading_job():
         trade_max = float(await get_config(session, 'trade_range_max', '0.25'))
         daily_min = float(await get_config(session, 'daily_range_min', '1.25'))
         daily_max = float(await get_config(session, 'daily_range_max', '1.5'))
+        negative_trades_per_day = int(await get_config(session, 'negative_trades_per_day', '5'))
         
         result = await session.execute(select(User))
         users = result.scalars().all()
@@ -654,30 +667,39 @@ async def trading_job():
                     starting_balance = bal
                 current_daily_percent = (daily_profit_so_far / starting_balance) * 100 if starting_balance > 0 else 0
                 
-                # Generate random daily target if not exceeded
-                daily_target_percent = random.uniform(daily_min, daily_max)
-                if current_daily_percent >= daily_target_percent:
-                    logger.debug(f"User {user.id} already reached daily target: {current_daily_percent:.2f}% >= {daily_target_percent:.2f}%")
-                    continue
+                # Determine if this should be a negative trade
+                # Probability based on negative_trades_per_day / TRADES_PER_DAY
+                negative_trade_probability = negative_trades_per_day / TRADES_PER_DAY if TRADES_PER_DAY > 0 else 0.15
+                is_negative_trade = random.random() < negative_trade_probability
                 
-                # Get per-user config or use global
+                if is_negative_trade:
+                    # Negative trade: -0.05% to -0.25%
+                    percent_per_trade = -random.uniform(0.05, 0.25)
+                else:
+                    # Positive trade: check if we haven't exceeded daily target
+                    daily_target_percent = random.uniform(daily_min, daily_max)
+                    if current_daily_percent >= daily_target_percent:
+                        logger.debug(f"User {user.id} already reached daily target: {current_daily_percent:.2f}% >= {daily_target_percent:.2f}%")
+                        continue
+                    
+                    # Generate random percent_per_trade within allowed range
+                    percent_per_trade = random.uniform(trade_min, trade_max)
+                    
+                    # Ensure we don't exceed daily limit
+                    remaining_daily_percent = daily_target_percent - current_daily_percent
+                    if percent_per_trade > remaining_daily_percent:
+                        percent_per_trade = remaining_daily_percent
+                    
+                    if percent_per_trade <= 0:
+                        continue
+                
+                # Get per-user config or use random pair from diverse list
                 user_config = await get_user_trade_config(session, user.id)
                 if user_config:
                     pair = user_config['pair']
                 else:
-                    # Use random pair
-                    pair = random.choice(['BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'LTCUSDT'])
-                
-                # Generate random percent_per_trade within allowed range
-                percent_per_trade = random.uniform(trade_min, trade_max)
-                
-                # Ensure we don't exceed daily limit
-                remaining_daily_percent = daily_target_percent - current_daily_percent
-                if percent_per_trade > remaining_daily_percent:
-                    percent_per_trade = remaining_daily_percent
-                
-                if percent_per_trade <= 0:
-                    continue
+                    # Use random pair from diverse trading pairs list
+                    pair = pick_random_pair()
                 
                 # Try to fetch Binance price, fallback to simulated
                 live_price = await fetch_binance_price(pair)
@@ -689,10 +711,8 @@ async def trading_job():
                     async with _price_lock:
                         live_price = simulate_price_walk(pair)
                 
-                # Calculate profit based on percent_per_trade
+                # Calculate profit/loss based on percent_per_trade
                 profit = round((percent_per_trade / 100.0) * bal, 6)
-                if profit <= 0:
-                    continue
                 
                 # Update balances
                 new_balance = bal + profit
@@ -1454,6 +1474,41 @@ async def cmd_set_trades_per_day(update: Update, context: ContextTypes.DEFAULT_T
     )
     await post_admin_log(context.bot, f"Admin set trades per day to {trades_per_day} (frequency: {freq_minutes} minutes).")
 
+async def cmd_set_negative_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /set_negative_trades <number> - Set how many trades per day should be negative"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    args = context.args
+    if not args:
+        await update.effective_message.reply_text("Usage: /set_negative_trades <number>\nExample: /set_negative_trades 5\n\nSets how many trades per day should result in losses (-0.05% to -0.25%).")
+        return
+    
+    try:
+        negative_trades = int(args[0])
+    except ValueError:
+        await update.effective_message.reply_text("Invalid number. Usage: /set_negative_trades <number> (positive integer)")
+        return
+    
+    if negative_trades < 0:
+        await update.effective_message.reply_text("Number must be non-negative (0 or more).")
+        return
+    
+    if negative_trades > TRADES_PER_DAY:
+        await update.effective_message.reply_text(f"⚠️ Warning: Negative trades ({negative_trades}) exceeds total trades per day ({TRADES_PER_DAY}).\nSetting anyway, but consider adjusting trades per day.")
+    
+    # Store in Config
+    async with async_session() as session:
+        await set_config(session, 'negative_trades_per_day', str(negative_trades))
+    
+    await update.effective_message.reply_text(
+        f"✅ Negative trades per day set to {negative_trades}.\n"
+        f"Each negative trade will result in a loss of -0.05% to -0.25%."
+    )
+    await post_admin_log(context.bot, f"Admin set negative trades per day to {negative_trades}.")
+
 async def cmd_set_daily_percent(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /set_daily_percent <percent>"""
     user_id = update.effective_user.id
@@ -1557,6 +1612,7 @@ async def cmd_trading_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
         trade_max = await get_config(session, 'trade_range_max', '0.25')
         daily_min = await get_config(session, 'daily_range_min', '1.25')
         daily_max = await get_config(session, 'daily_range_max', '1.5')
+        negative_trades = await get_config(session, 'negative_trades_per_day', '5')
         
         result = await session.execute(select(UserTradeConfig))
         user_configs = result.scalars().all()
@@ -1577,6 +1633,8 @@ async def cmd_trading_status(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"📊 Trades per day: {TRADES_PER_DAY} (determined by frequency)\n"
         f"💹 Global daily percent: {daily_min}% to {daily_max}%\n"
         f"📈 Global trade percent: {trade_min}% to {trade_max}%\n"
+        f"📉 Negative trades per day: {negative_trades} (loss: -0.05% to -0.25%)\n"
+        f"🪙 Trading pairs: Random from 20 diverse coins\n"
         f"👤 User overrides: {override_count}"
         f"{override_text}"
     )
@@ -2192,6 +2250,7 @@ def main():
     application.add_handler(CommandHandler("trade_now", cmd_trade_now))
     application.add_handler(CommandHandler("trade_status", cmd_trade_status))
     application.add_handler(CommandHandler("set_trades_per_day", cmd_set_trades_per_day))
+    application.add_handler(CommandHandler("set_negative_trades", cmd_set_negative_trades))
     application.add_handler(CommandHandler("set_daily_percent", cmd_set_daily_percent))
     application.add_handler(CommandHandler("set_trade_percent", cmd_set_trade_percent))
     application.add_handler(CommandHandler("set_daily_range", cmd_set_daily_range))
