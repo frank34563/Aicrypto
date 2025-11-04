@@ -332,46 +332,85 @@ INVEST_AMOUNT, INVEST_PROOF, INVEST_CONFIRM, WITHDRAW_AMOUNT, WITHDRAW_WALLET, W
 # -----------------------
 TRANSLATIONS = {
     "en": {
-        "main_menu_title": "Main Menu",
+        "main_menu_title": "📋 Main Menu",
         "settings_title": "⚙️ Settings",
-        "settings_language": "Language",
+        "settings_language": "🌍 Language",
         "change_language": "Change Language",
-        "settings_wallet": "Set/Update Withdrawal Wallet",
-        "lang_auto": "Auto (Telegram)",
-        "lang_en": "English",
-        "lang_fr": "Français",
-        "lang_es": "Español",
-        "lang_set_success": "Language updated to {lang}.",
+        "settings_wallet": "💳 Set/Update Withdrawal Wallet",
+        "lang_auto": "🔄 Auto (from Telegram)",
+        "lang_en": "🇬🇧 English",
+        "lang_fr": "🇫🇷 Français",
+        "lang_es": "🇪🇸 Español",
+        "lang_set_success": "✅ Language updated to {lang}",
         "lang_current": "Current language: {lang}",
-        "info_text": "ℹ️ Information\n\nWelcome to AiCrypto bot.\n- Invest: deposit funds to provided wallet and upload proof (txid or screenshot).\n- Withdraw: request withdrawals; admin will approve and process.",
+        "info_text": (
+            "ℹ️ <b>Welcome to AiCrypto Bot</b>\n\n"
+            "🤖 <b>AI-Powered Trading Platform</b>\n"
+            "Our advanced AI system trades cryptocurrency 24/7 to grow your investment.\n\n"
+            "📈 <b>How to Get Started:</b>\n"
+            "1️⃣ <b>Invest</b> - Deposit USDT to the provided wallet\n"
+            "2️⃣ <b>Upload Proof</b> - Share transaction ID or screenshot\n"
+            "3️⃣ <b>Watch Growth</b> - AI trades automatically for daily profits\n"
+            "4️⃣ <b>Withdraw</b> - Request withdrawal anytime\n\n"
+            "💹 <b>Daily Returns:</b> 1.25% - 1.5%\n"
+            "🔒 <b>Secure & Automated</b>\n"
+            "📊 <b>Real-time Updates</b>\n\n"
+            "Need help? Contact support anytime!"
+        ),
     },
     "fr": {
-        "main_menu_title": "Menu Principal",
+        "main_menu_title": "📋 Menu Principal",
         "settings_title": "⚙️ Paramètres",
-        "settings_language": "Langue",
+        "settings_language": "🌍 Langue",
         "change_language": "Changer la langue",
-        "settings_wallet": "Définir/Mettre à jour le portefeuille de retrait",
-        "lang_auto": "Auto (Telegram)",
-        "lang_en": "Anglais",
-        "lang_fr": "Français",
-        "lang_es": "Espagnol",
-        "lang_set_success": "Langue mise à jour en {lang}.",
+        "settings_wallet": "💳 Définir/Mettre à jour le portefeuille de retrait",
+        "lang_auto": "🔄 Auto (Telegram)",
+        "lang_en": "🇬🇧 Anglais",
+        "lang_fr": "🇫🇷 Français",
+        "lang_es": "🇪🇸 Espagnol",
+        "lang_set_success": "✅ Langue mise à jour en {lang}",
         "lang_current": "Langue actuelle : {lang}",
-        "info_text": "ℹ️ Informations\n\nBienvenue sur AiCrypto bot.\n- Investissez : déposez des fonds sur le portefeuille fourni et uploadez une preuve (txid ou capture d'écran).\n- Retrait : demandez des retraits ; l'admin approuvera et traitera.",
+        "info_text": (
+            "ℹ️ <b>Bienvenue sur AiCrypto Bot</b>\n\n"
+            "🤖 <b>Plateforme de Trading IA</b>\n"
+            "Notre système IA avancé trade les cryptomonnaies 24/7 pour faire croître votre investissement.\n\n"
+            "📈 <b>Comment Commencer:</b>\n"
+            "1️⃣ <b>Investir</b> - Déposez USDT sur le portefeuille fourni\n"
+            "2️⃣ <b>Preuve</b> - Partagez l'ID de transaction ou capture d'écran\n"
+            "3️⃣ <b>Croissance</b> - L'IA trade automatiquement pour des profits quotidiens\n"
+            "4️⃣ <b>Retirer</b> - Demandez un retrait à tout moment\n\n"
+            "💹 <b>Rendements Quotidiens:</b> 1.25% - 1.5%\n"
+            "🔒 <b>Sécurisé & Automatisé</b>\n"
+            "📊 <b>Mises à jour en temps réel</b>\n\n"
+            "Besoin d'aide? Contactez le support!"
+        ),
     },
     "es": {
-        "main_menu_title": "Menú Principal",
+        "main_menu_title": "📋 Menú Principal",
         "settings_title": "⚙️ Configuración",
-        "settings_language": "Idioma",
+        "settings_language": "🌍 Idioma",
         "change_language": "Cambiar idioma",
-        "settings_wallet": "Establecer/Actualizar billetera de retiro",
-        "lang_auto": "Auto (Telegram)",
-        "lang_en": "Inglés",
-        "lang_fr": "Francés",
-        "lang_es": "Español",
-        "lang_set_success": "Idioma actualizado a {lang}.",
+        "settings_wallet": "💳 Establecer/Actualizar billetera de retiro",
+        "lang_auto": "🔄 Auto (Telegram)",
+        "lang_en": "🇬🇧 Inglés",
+        "lang_fr": "🇫🇷 Francés",
+        "lang_es": "🇪🇸 Español",
+        "lang_set_success": "✅ Idioma actualizado a {lang}",
         "lang_current": "Idioma actual: {lang}",
-        "info_text": "ℹ️ Información\n\nBienvenido al bot AiCrypto.\n- Invertir: deposita fondos en la billetera proporcionada y sube comprobante (txid o captura).\n- Retirar: solicita retiros; el admin aprobará y procesará.",
+        "info_text": (
+            "ℹ️ <b>Bienvenido a AiCrypto Bot</b>\n\n"
+            "🤖 <b>Plataforma de Trading con IA</b>\n"
+            "Nuestro sistema IA avanzado opera criptomonedas 24/7 para hacer crecer tu inversión.\n\n"
+            "📈 <b>Cómo Empezar:</b>\n"
+            "1️⃣ <b>Invertir</b> - Deposita USDT en la billetera proporcionada\n"
+            "2️⃣ <b>Comprobante</b> - Comparte ID de transacción o captura de pantalla\n"
+            "3️⃣ <b>Ver Crecimiento</b> - La IA opera automáticamente para ganancias diarias\n"
+            "4️⃣ <b>Retirar</b> - Solicita retiro en cualquier momento\n\n"
+            "💹 <b>Retornos Diarios:</b> 1.25% - 1.5%\n"
+            "🔒 <b>Seguro & Automatizado</b>\n"
+            "📊 <b>Actualizaciones en tiempo real</b>\n\n"
+            "¿Necesitas ayuda? ¡Contacta soporte!"
+        ),
     }
 }
 DEFAULT_LANG = "en"
@@ -860,14 +899,16 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         async with async_session() as session:
             lang = await get_user_language(session, query.from_user.id, update=update)
         WELCOME_TEXT = (
-            "Welcome to AiCrypto bot.\n"
-            "- Invest: deposit funds to provided wallet and upload proof (txid or screenshot). and produce the full code \n"
-            "- Withdraw: request withdrawals; admin will approve and process."
+            "🎉 <b>Welcome Back to AiCrypto Bot!</b>\n\n"
+            "🤖 Your Personal AI Trading Assistant\n"
+            "💹 Automated Crypto Trading 24/7\n"
+            "📊 Daily Profit: 1.25% - 1.5%\n\n"
+            "👇 Select an option below"
         )
         try:
-            await query.message.edit_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+            await query.message.edit_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), parse_mode="HTML")
         except Exception:
-            await query.message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+            await query.message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), parse_mode="HTML")
         return
 
     if data == "menu_balance":
@@ -908,7 +949,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "menu_info":
         async with async_session() as session:
             lang = await get_user_language(session, query.from_user.id, update=update)
-        await query.edit_message_text(t(lang, "info_text"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+        await query.edit_message_text(t(lang, "info_text"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), parse_mode="HTML")
         return
 
     if data == "menu_help":
@@ -2158,7 +2199,7 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
         lang = await get_user_language(session, update.effective_user.id, update=update)
-    await update.effective_message.reply_text(t(lang, "info_text"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+    await update.effective_message.reply_text(t(lang, "info_text"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), parse_mode="HTML")
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_button = InlineKeyboardMarkup([[InlineKeyboardButton("💬 Open Support Chat", url=SUPPORT_URL)]])
@@ -2176,12 +2217,14 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
         lang = await get_user_language(session, update.effective_user.id, update=update)
     WELCOME_TEXT = (
-        "Welcome to AiCrypto bot.\n"
-        "- Invest: deposit funds to provided wallet and upload proof (txid or screenshot). and produce the full code \n"
-        "- Withdraw: request withdrawals; admin will approve and process."
+        "🎉 <b>Welcome to AiCrypto Bot!</b>\n\n"
+        "🤖 Your Personal AI Trading Assistant\n"
+        "💹 Automated Crypto Trading 24/7\n"
+        "📊 Daily Profit: 1.25% - 1.5%\n\n"
+        "👇 Select an option below to get started"
     )
     try:
-        await update.effective_message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
+        await update.effective_message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), parse_mode="HTML")
     except Exception:
         await update.effective_message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
 
