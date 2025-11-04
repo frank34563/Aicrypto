@@ -447,7 +447,7 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang:
         rows.append([InlineKeyboardButton(labels["referrals"], callback_data="menu_referrals"),
                      InlineKeyboardButton(labels["settings"], callback_data="menu_settings")])
         rows.append([InlineKeyboardButton(labels["information"], callback_data="menu_info"),
-                     InlineKeyboardButton(labels["help"], callback_data="menu_help")])
+                     InlineKeyboardButton(labels["help"], url=SUPPORT_URL)])
         rows.append([InlineKeyboardButton(labels["exit"], callback_data="menu_exit")])
         return InlineKeyboardMarkup(rows)
 
@@ -456,7 +456,7 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang:
         (labels["balance"], "menu_balance", labels["invest"], "menu_invest"),
         (labels["history"], "menu_history", labels["withdraw"], "menu_withdraw"),
         (labels["referrals"], "menu_referrals", labels["settings"], "menu_settings"),
-        (labels["information"], "menu_info", labels["help"], "menu_help"),
+        (labels["information"], "menu_info", labels["help"], "url"),
     ]
 
     rows = []
@@ -464,7 +464,11 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang:
         l = _compact_pad(l_label, target=tlen)
         r = _compact_pad(r_label, target=tlen)
         left_btn = InlineKeyboardButton(l, callback_data=l_cb)
-        right_btn = InlineKeyboardButton(r, callback_data=r_cb)
+        # Special handling for help button - use URL instead of callback
+        if r_cb == "url":
+            right_btn = InlineKeyboardButton(r, url=SUPPORT_URL)
+        else:
+            right_btn = InlineKeyboardButton(r, callback_data=r_cb)
         rows.append([left_btn, right_btn])
 
     exit_label = _compact_pad(labels["exit"], target=(tlen*2)//2)
@@ -2082,8 +2086,8 @@ async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.effective_message.reply_text(t(lang, "info_text"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang))
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_button = InlineKeyboardMarkup([[InlineKeyboardButton("❓ Help", url=SUPPORT_URL)]])
-    await update.effective_message.reply_text("Click the button below for help:", reply_markup=help_button)
+    help_button = InlineKeyboardMarkup([[InlineKeyboardButton("💬 Open Support Chat", url=SUPPORT_URL)]])
+    await update.effective_message.reply_text("Need assistance? Click below to chat with support:", reply_markup=help_button)
 
 async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
