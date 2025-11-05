@@ -73,11 +73,10 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 # Main menu image configuration
 MAIN_MENU_IMAGE_URL = os.getenv('MAIN_MENU_IMAGE_URL', 'assets/Main Menu.jpg')  # Can be URL or local file path
 MAIN_MENU_CAPTION = (
-    "🎉 <b>Welcome to AiCrypto Bot!</b>\n\n"
+    "🚀 Welcome to Ai Crypto Bot - Your Smart Path to Crypto Growth!\n\n"
     "🤖 Your Personal AI Trading Assistant\n"
-    "💹 Automated Crypto Trading 24/7\n"
-    "📊 Daily Profit: 1.25% - 1.5%\n\n"
-    "👇 Select an option below to get started"
+    "💹 Automated Crypto Trading 24/7\n\n"
+    "📋 Main Menu"
 )
 
 # Binance and trading config
