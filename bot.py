@@ -1200,9 +1200,14 @@ _trading_job = None
 # Supports both positive and negative trades based on admin configuration
 # -----------------------
 async def trading_job():
-    if not TRADING_ENABLED:
-        logger.debug("trading_job: TRADING_ENABLED is False, skipping run")
+    # Check both global and database config for trading enabled status
+    async with async_session() as session:
+        trading_enabled_db = await get_config(session, 'trading_enabled', '1')
+    
+    if not TRADING_ENABLED or trading_enabled_db != '1':
+        logger.debug("trading_job: Trading is disabled (TRADING_ENABLED=%s, DB=%s), skipping run", TRADING_ENABLED, trading_enabled_db)
         return
+    
     now = datetime.utcnow()
     logger.info("trading_job: starting run at %s", now.isoformat())
     async with async_session() as session:
@@ -1377,10 +1382,14 @@ async def trading_job():
                     f"📊 {t['profit']}: {profit_percent}%\n"
                     f"💰{t['balance']}: {display_balance} USDT"
                 )
+                # Use application instance if available, otherwise skip notification
                 try:
-                    await application.bot.send_message(chat_id=user.id, text=trade_text)
-                except Exception:
-                    logger.debug("Unable to send trade alert to user %s (may not have interacted yet)", user.id)
+                    if application and application.bot:
+                        await application.bot.send_message(chat_id=user.id, text=trade_text)
+                    else:
+                        logger.warning("Application bot not available for trade notification to user %s", user.id)
+                except Exception as e:
+                    logger.warning("Unable to send trade alert to user %s: %s", user.id, str(e))
             except Exception:
                 logger.exception("trading_job failed for user %s", getattr(user, "id", "<unknown>"))
 
@@ -2275,7 +2284,12 @@ async def cmd_trade_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     global TRADING_ENABLED
     TRADING_ENABLED = True
-    await update.effective_message.reply_text("Trading simulation ENABLED.")
+    
+    # Persist to database
+    async with async_session() as session:
+        await set_config(session, 'trading_enabled', '1')
+    
+    await update.effective_message.reply_text("✅ Trading simulation ENABLED.")
     await post_admin_log(context.bot, "Admin enabled trading simulation.")
 
 async def cmd_trade_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2285,7 +2299,12 @@ async def cmd_trade_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     global TRADING_ENABLED
     TRADING_ENABLED = False
-    await update.effective_message.reply_text("Trading simulation DISABLED.")
+    
+    # Persist to database
+    async with async_session() as session:
+        await set_config(session, 'trading_enabled', '0')
+    
+    await update.effective_message.reply_text("❌ Trading simulation DISABLED.")
     await post_admin_log(context.bot, "Admin disabled trading simulation.")
 
 async def cmd_trade_freq(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2602,6 +2621,10 @@ async def cmd_use_binance_on(update: Update, context: ContextTypes.DEFAULT_TYPE)
     global USE_BINANCE
     USE_BINANCE = True
     
+    # Persist to database
+    async with async_session() as session:
+        await set_config(session, 'use_binance_api', '1')
+    
     await update.effective_message.reply_text("✅ Binance API enabled")
     await post_admin_log(context.bot, "Admin enabled Binance API")
 
@@ -2614,6 +2637,10 @@ async def cmd_use_binance_off(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     global USE_BINANCE
     USE_BINANCE = False
+    
+    # Persist to database
+    async with async_session() as session:
+        await set_config(session, 'use_binance_api', '0')
     
     await update.effective_message.reply_text("✅ Binance API disabled (will use simulated prices)")
     await post_admin_log(context.bot, "Admin disabled Binance API")
@@ -3299,7 +3326,8 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/trade_off - Disable trading\n"
         "/trade_status - Show trading status\n"
         "/trade_now - Trigger trading job now\n"
-        "/trade_freq [minutes] - Set trading frequency\n\n"
+        "/trade_freq [minutes] - Set trading frequency\n"
+        "/list_trading_vars - List all trading configuration\n\n"
         "**Binance Control:**\n"
         "/use_binance_on - Enable Binance API\n"
         "/use_binance_off - Disable Binance API\n"
@@ -3336,6 +3364,73 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     await update.effective_message.reply_text(commands_text)
+
+async def cmd_list_trading_vars(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /list_trading_vars - List all trading configuration variables"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    async with async_session() as session:
+        # Get all config values from database
+        trading_enabled_db = await get_config(session, 'trading_enabled', '1')
+        use_binance_db = await get_config(session, 'use_binance_api', '1')
+        trade_min = await get_config(session, 'trade_range_min', '0.05')
+        trade_max = await get_config(session, 'trade_range_max', '0.25')
+        daily_min = await get_config(session, 'daily_range_min', '1.25')
+        daily_max = await get_config(session, 'daily_range_max', '1.5')
+        negative_trades = await get_config(session, 'negative_trades_per_day', '5')
+    
+    # Check scheduler status
+    scheduler_running = "✅ Running" if _scheduler and _scheduler.running else "❌ Not Running"
+    
+    # Check if trading job exists in scheduler
+    trading_job_scheduled = "❌ Not Scheduled"
+    next_run = "N/A"
+    if _scheduler:
+        try:
+            job = _scheduler.get_job(TRADING_JOB_ID)
+            if job:
+                trading_job_scheduled = "✅ Scheduled"
+                if job.next_run_time:
+                    next_run = job.next_run_time.strftime("%Y-%m-%d %H:%M:%S UTC")
+        except Exception:
+            pass
+    
+    # Build comprehensive status report
+    status_text = (
+        "📊 <b>Trading Configuration &amp; Status</b>\n\n"
+        "<b>🔧 System Status:</b>\n"
+        f"Scheduler: {scheduler_running}\n"
+        f"Trading Job: {trading_job_scheduled}\n"
+        f"Next Run: {next_run}\n\n"
+        "<b>⚙️ Trading Control:</b>\n"
+        f"Trading Enabled (Global): {'✅ Yes' if TRADING_ENABLED else '❌ No'}\n"
+        f"Trading Enabled (Database): {'✅ Yes' if trading_enabled_db == '1' else '❌ No'}\n"
+        f"Binance API (Global): {'✅ Enabled' if USE_BINANCE else '❌ Disabled'}\n"
+        f"Binance API (Database): {'✅ Enabled' if use_binance_db == '1' else '❌ Disabled'}\n\n"
+        "<b>📈 Trading Parameters:</b>\n"
+        f"Trades Per Day: {TRADES_PER_DAY}\n"
+        f"Trading Frequency: {TRADING_FREQ_MINUTES} minutes\n"
+        f"Negative Trades/Day: {negative_trades}\n\n"
+        "<b>📊 Profit Ranges:</b>\n"
+        f"Daily Profit Range: {daily_min}% - {daily_max}%\n"
+        f"Trade Profit Range: {trade_min}% - {trade_max}%\n"
+        f"Negative Trade Range: -0.05% - -0.25%\n\n"
+        "<b>💱 Trading Pairs:</b>\n"
+        f"Available Pairs: {len(TRADING_PAIRS)} pairs\n"
+        f"Pairs: {', '.join(TRADING_PAIRS[:5])}" + 
+        ("..." if len(TRADING_PAIRS) > 5 else "") + "\n\n"
+        "<b>🔄 Global Defaults:</b>\n"
+        f"Daily Percent: {GLOBAL_DAILY_PERCENT}%\n"
+        f"Trade Percent: {GLOBAL_TRADE_PERCENT}%\n\n"
+        "<i>Use /trade_on or /trade_off to enable/disable trading\n"
+        "Use /trade_now to trigger an immediate trade cycle</i>"
+    )
+    
+    await update.effective_message.reply_text(status_text, parse_mode="HTML")
+
 
 # -----------------------
 # HISTORY handlers (unchanged)
@@ -3887,11 +3982,32 @@ def main():
     
     # Admin helper commands
     application.add_handler(CommandHandler("admin_cmds", cmd_admin_cmds))
+    application.add_handler(CommandHandler("list_trading_vars", cmd_list_trading_vars))
 
     application.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    
+    # Initialize trading state from database with error handling
+    async def init_trading_state():
+        global TRADING_ENABLED, USE_BINANCE
+        try:
+            async with async_session() as session:
+                trading_enabled_db = await get_config(session, 'trading_enabled', '1')
+                use_binance_db = await get_config(session, 'use_binance_api', '1')
+                TRADING_ENABLED = (trading_enabled_db == '1')
+                USE_BINANCE = (use_binance_db == '1')
+                logger.info("Initialized trading state from DB: TRADING_ENABLED=%s, USE_BINANCE=%s", TRADING_ENABLED, USE_BINANCE)
+        except Exception as e:
+            logger.warning("Failed to initialize trading state from DB, using defaults: %s", e)
+            # Keep current global defaults if DB read fails
+    
+    try:
+        loop.run_until_complete(init_trading_state())
+    except Exception as e:
+        logger.error("Error initializing trading state: %s", e)
+    
     try:
         _scheduler = AsyncIOScheduler(event_loop=loop)
     except TypeError:
