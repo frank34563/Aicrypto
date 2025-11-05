@@ -888,6 +888,10 @@ def _compact_pad(label: str, target: int = 10) -> str:
     right = needed - left
     return (" " * left) + label + (" " * right) + ZWSP
 
+def build_back_to_menu_keyboard(lang: str = DEFAULT_LANG) -> InlineKeyboardMarkup:
+    """Create a keyboard with a single 'Back to Menu' button"""
+    return InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, "back_to_menu"), callback_data="menu_exit")]])
+
 def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang: str = DEFAULT_LANG) -> InlineKeyboardMarkup:
     labels = {
         "balance": "💰 " + {"en":"Balance","fr":"Solde","es":"Saldo","ar":"الرصيد"}.get(lang, "Balance"),
@@ -1408,22 +1412,23 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "📊 Daily Profit: 1.25% - 1.5%\n\n"
             "👇 Select an option below"
         )
+        # Send a new message instead of editing to keep the original data visible
         try:
-            await query.message.edit_text(
+            await query.message.reply_text(
                 WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), 
                 reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), 
                 parse_mode="HTML"
             )
         except Exception as e:
-            logger.debug(f"Failed to edit message, sending new one: {e}")
+            logger.exception(f"Failed to send welcome message: {e}")
+            # Fallback: send menu without HTML formatting (keyboard buttons don't need HTML parsing)
             try:
                 await query.message.reply_text(
-                    WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), 
-                    reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), 
-                    parse_mode="HTML"
+                    "Main Menu",
+                    reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang)
                 )
             except Exception as e2:
-                logger.exception(f"Failed to send welcome message: {e2}")
+                logger.exception(f"Fallback menu send also failed: {e2}")
         return
 
     # Balance
@@ -1515,9 +1520,10 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             async with async_session() as session:
                 lang = await get_user_language(session, query.from_user.id, update=update)
+            # Add a back to menu button instead of showing the full menu inline
             await query.edit_message_text(
                 t(lang, "info_text"), 
-                reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), 
+                reply_markup=build_back_to_menu_keyboard(lang), 
                 parse_mode="HTML"
             )
         except Exception as e:
@@ -1556,7 +1562,7 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
         f"👤 <b>Manager:</b> {SUPPORT_USER}"
     )
     
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(lang,"back_to_menu"), callback_data="menu_exit")]])
+    kb = build_back_to_menu_keyboard(lang)
     
     try:
         if hasattr(query_or_message, "message") and hasattr(query_or_message, "data"):
@@ -3619,7 +3625,8 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def information_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
         lang = await get_user_language(session, update.effective_user.id, update=update)
-    await update.effective_message.reply_text(t(lang, "info_text"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), parse_mode="HTML")
+    # Add a back to menu button instead of showing the full menu inline
+    await update.effective_message.reply_text(t(lang, "info_text"), reply_markup=build_back_to_menu_keyboard(lang), parse_mode="HTML")
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
