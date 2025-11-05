@@ -2620,6 +2620,191 @@ async def cmd_set_trade_range(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     await post_admin_log(context.bot, f"Admin set trade range to {min_percent}% - {max_percent}%")
 
+# Notification/Broadcast commands
+async def cmd_set_broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /set_broadcast_message <message> - Set broadcast message for all users"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    # Get message from command args
+    message = ' '.join(context.args) if context.args else None
+    
+    if not message:
+        await update.effective_message.reply_text(
+            "Usage: /set_broadcast_message <your message>\n\n"
+            "Example: /set_broadcast_message 🎉 Great news! AI just completed a profitable trade. Check your balance!"
+        )
+        return
+    
+    async with async_session() as session:
+        await set_config(session, 'broadcast_message', message)
+    
+    await update.effective_message.reply_text(
+        f"✅ Broadcast message set:\n\n{message}\n\n"
+        f"Use /send_broadcast to send this to all users."
+    )
+    await post_admin_log(context.bot, f"Admin set broadcast message")
+
+async def cmd_set_new_user_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /set_new_user_message <message> - Set message for users who haven't invested"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    message = ' '.join(context.args) if context.args else None
+    
+    if not message:
+        await update.effective_message.reply_text(
+            "Usage: /set_new_user_message <your message>\n\n"
+            "Example: /set_new_user_message 🤖 AI performed a profitable trade! Ready to start earning? Make your first deposit now!"
+        )
+        return
+    
+    async with async_session() as session:
+        await set_config(session, 'new_user_message', message)
+    
+    await update.effective_message.reply_text(
+        f"✅ New user message set:\n\n{message}\n\n"
+        f"Use /send_new_user_alert to send this to users who haven't invested."
+    )
+    await post_admin_log(context.bot, f"Admin set new user message")
+
+async def cmd_send_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /send_broadcast - Send broadcast message to all users"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    async with async_session() as session:
+        message = await get_config(session, 'broadcast_message')
+        
+        if not message:
+            await update.effective_message.reply_text(
+                "❌ No broadcast message set. Use /set_broadcast_message first."
+            )
+            return
+        
+        # Get all users
+        result = await session.execute(select(User))
+        users = result.scalars().all()
+    
+    sent_count = 0
+    failed_count = 0
+    
+    status_msg = await update.effective_message.reply_text(
+        f"📤 Sending broadcast to {len(users)} users..."
+    )
+    
+    for user in users:
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=message,
+                parse_mode="HTML"
+            )
+            sent_count += 1
+            
+            # Rate limiting
+            if sent_count % 20 == 0:
+                await asyncio.sleep(1)
+        except Exception as e:
+            logger.exception(f"Failed to send broadcast to user {user.id}")
+            failed_count += 1
+    
+    await status_msg.edit_text(
+        f"✅ Broadcast complete!\n\n"
+        f"✔️ Sent: {sent_count}\n"
+        f"❌ Failed: {failed_count}\n\n"
+        f"Message:\n{message}"
+    )
+    await post_admin_log(context.bot, f"Admin sent broadcast to {sent_count} users")
+
+async def cmd_send_new_user_alert(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /send_new_user_alert - Send message to users who haven't invested"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    async with async_session() as session:
+        message = await get_config(session, 'new_user_message')
+        
+        if not message:
+            await update.effective_message.reply_text(
+                "❌ No new user message set. Use /set_new_user_message first."
+            )
+            return
+        
+        # Get users who have no credited investments
+        result = await session.execute(
+            select(User).where(
+                ~User.id.in_(
+                    select(Transaction.user_id).where(
+                        Transaction.type == 'invest',
+                        Transaction.status == 'credited'
+                    ).distinct()
+                )
+            )
+        )
+        users = result.scalars().all()
+    
+    sent_count = 0
+    failed_count = 0
+    
+    status_msg = await update.effective_message.reply_text(
+        f"📤 Sending new user alert to {len(users)} users who haven't invested..."
+    )
+    
+    for user in users:
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text=message,
+                parse_mode="HTML"
+            )
+            sent_count += 1
+            
+            # Rate limiting
+            if sent_count % 20 == 0:
+                await asyncio.sleep(1)
+        except Exception as e:
+            logger.exception(f"Failed to send new user alert to user {user.id}")
+            failed_count += 1
+    
+    await status_msg.edit_text(
+        f"✅ New user alert complete!\n\n"
+        f"✔️ Sent: {sent_count}\n"
+        f"❌ Failed: {failed_count}\n\n"
+        f"Message:\n{message}"
+    )
+    await post_admin_log(context.bot, f"Admin sent new user alert to {sent_count} users")
+
+async def cmd_view_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /view_notifications - View current notification messages"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    async with async_session() as session:
+        broadcast_msg = await get_config(session, 'broadcast_message', 'Not set')
+        new_user_msg = await get_config(session, 'new_user_message', 'Not set')
+    
+    text = (
+        "📋 <b>Current Notification Messages</b>\n\n"
+        "<b>Broadcast Message (All Users):</b>\n"
+        f"{broadcast_msg}\n\n"
+        "<b>New User Message (Non-Investors):</b>\n"
+        f"{new_user_msg}\n\n"
+        "<i>Use /set_broadcast_message or /set_new_user_message to update.</i>"
+    )
+    
+    await update.effective_message.reply_text(text, parse_mode="HTML")
+
 async def cmd_set_deposit_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /set_deposit_wallet <coin> <network> <address> [primary]"""
     user_id = update.effective_user.id
@@ -2788,6 +2973,12 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/list_deposit_wallets [coin] - List all deposit wallets\n"
         "/mark_primary_wallet <id> - Mark wallet as primary\n"
         "/remove_deposit_wallet <id> - Remove a wallet\n\n"
+        "**Notifications:**\n"
+        "/set_broadcast_message <message> - Set broadcast for all users\n"
+        "/set_new_user_message <message> - Set message for non-investors\n"
+        "/send_broadcast - Send broadcast to all users\n"
+        "/send_new_user_alert - Send alert to non-investors\n"
+        "/view_notifications - View current messages\n\n"
         "**Admin:**\n"
         "/admin_cmds - Show this message\n"
         "/pending - Show pending transactions"
@@ -3276,6 +3467,13 @@ def main():
     application.add_handler(CommandHandler("list_deposit_wallets", cmd_list_deposit_wallets))
     application.add_handler(CommandHandler("mark_primary_wallet", cmd_mark_primary_wallet))
     application.add_handler(CommandHandler("remove_deposit_wallet", cmd_remove_deposit_wallet))
+    
+    # Notification/Broadcast commands
+    application.add_handler(CommandHandler("set_broadcast_message", cmd_set_broadcast_message))
+    application.add_handler(CommandHandler("set_new_user_message", cmd_set_new_user_message))
+    application.add_handler(CommandHandler("send_broadcast", cmd_send_broadcast))
+    application.add_handler(CommandHandler("send_new_user_alert", cmd_send_new_user_alert))
+    application.add_handler(CommandHandler("view_notifications", cmd_view_notifications))
     
     # Admin helper commands
     application.add_handler(CommandHandler("admin_cmds", cmd_admin_cmds))
