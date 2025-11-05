@@ -70,6 +70,16 @@ SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('
 MENU_FULL_TWO_COLUMN = os.getenv('MENU_FULL_TWO_COLUMN', 'true').lower() in ('1','true','yes','on')
 DATABASE_URL = os.getenv('DATABASE_URL')
 
+# Main menu image configuration
+MAIN_MENU_IMAGE_URL = os.getenv('MAIN_MENU_IMAGE_URL', 'assets/Main Menu.jpg')  # Can be URL or local file path
+MAIN_MENU_CAPTION = (
+    "🎉 <b>Welcome to AiCrypto Bot!</b>\n\n"
+    "🤖 Your Personal AI Trading Assistant\n"
+    "💹 Automated Crypto Trading 24/7\n"
+    "📊 Daily Profit: 1.25% - 1.5%\n\n"
+    "👇 Select an option below to get started"
+)
+
 # Binance and trading config
 BINANCE_CACHE_TTL = int(os.getenv('BINANCE_CACHE_TTL', '10'))  # seconds
 BINANCE_API_URL = "https://api.binance.com/api/v3/ticker/price"
@@ -958,6 +968,81 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang:
     rows.append([InlineKeyboardButton(exit_label, callback_data="menu_exit")])
     return InlineKeyboardMarkup(rows)
 
+async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, lang: str = DEFAULT_LANG):
+    """Send main menu with image, falling back to text-only if image fails"""
+    keyboard = build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang)
+    photo_file = None
+    
+    try:
+        # Determine if MAIN_MENU_IMAGE_URL is a URL or local file
+        photo_input = MAIN_MENU_IMAGE_URL
+        if not MAIN_MENU_IMAGE_URL.startswith(('http://', 'https://')):
+            # It's a local file path - validate and open it
+            # Ensure the path is safe (within current directory or assets)
+            if '..' in MAIN_MENU_IMAGE_URL or MAIN_MENU_IMAGE_URL.startswith('/'):
+                logger.warning("Invalid image path: %s", MAIN_MENU_IMAGE_URL)
+                raise ValueError("Invalid image path")
+            
+            # Check file exists before opening
+            if not os.path.exists(MAIN_MENU_IMAGE_URL):
+                logger.warning("Image file not found: %s", MAIN_MENU_IMAGE_URL)
+                raise FileNotFoundError(f"Image file not found: {MAIN_MENU_IMAGE_URL}")
+            
+            photo_file = open(MAIN_MENU_IMAGE_URL, 'rb')
+            photo_input = photo_file
+        
+        # Try to send with photo
+        if update.callback_query:
+            await update.callback_query.message.reply_photo(
+                photo=photo_input, 
+                caption=MAIN_MENU_CAPTION, 
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        else:
+            await update.message.reply_photo(
+                photo=photo_input, 
+                caption=MAIN_MENU_CAPTION, 
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+            
+    except (FileNotFoundError, ValueError, IOError, OSError) as e:
+        logger.warning("Failed to send main menu image: %s", e)
+        # Fallback to text-only menu
+        if update.callback_query:
+            await update.callback_query.message.reply_text(
+                MAIN_MENU_CAPTION, 
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        else:
+            await update.message.reply_text(
+                MAIN_MENU_CAPTION, 
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+    except Exception:
+        # Catch any other unexpected errors (e.g., Telegram API errors)
+        logger.exception("Unexpected error sending main menu")
+        # Fallback to text-only menu
+        if update.callback_query:
+            await update.callback_query.message.reply_text(
+                MAIN_MENU_CAPTION, 
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+        else:
+            await update.message.reply_text(
+                MAIN_MENU_CAPTION, 
+                reply_markup=keyboard,
+                parse_mode="HTML"
+            )
+    finally:
+        # Ensure file is closed if it was opened
+        if photo_file is not None:
+            photo_file.close()
+
 def is_probable_wallet(address: str) -> bool:
     address = (address or "").strip()
     if not address:
@@ -1421,30 +1506,7 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await cancel_conv(update, context)
         async with async_session() as session:
             lang = await get_user_language(session, query.from_user.id, update=update)
-        WELCOME_TEXT = (
-            "🎉 <b>Welcome Back to AiCrypto Bot!</b>\n\n"
-            "🤖 Your Personal AI Trading Assistant\n"
-            "💹 Automated Crypto Trading 24/7\n"
-            "📊 Daily Profit: 1.25% - 1.5%\n\n"
-            "👇 Select an option below"
-        )
-        # Send a new message instead of editing to keep the original data visible
-        try:
-            await query.message.reply_text(
-                WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), 
-                reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), 
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            logger.exception(f"Failed to send welcome message: {e}")
-            # Fallback: send menu without HTML formatting (keyboard buttons don't need HTML parsing)
-            try:
-                await query.message.reply_text(
-                    "Main Menu",
-                    reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang)
-                )
-            except Exception as e2:
-                logger.exception(f"Fallback menu send also failed: {e2}")
+        await send_main_menu(update, context, lang=lang)
         return
 
     # Balance
@@ -3710,17 +3772,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         lang = await get_user_language(session, user_id, update=update)
     
-    WELCOME_TEXT = (
-        "🎉 <b>Welcome to AiCrypto Bot!</b>\n\n"
-        "🤖 Your Personal AI Trading Assistant\n"
-        "💹 Automated Crypto Trading 24/7\n"
-        "📊 Daily Profit: 1.25% - 1.5%\n\n"
-        "👇 Select an option below to get started"
-    )
-    try:
-        await update.effective_message.reply_text(WELCOME_TEXT + "\n\n" + t(lang, "main_menu_title"), reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang), parse_mode="HTML")
-    except Exception:
-        await update.effective_message.reply_text("Main Menu", reply_markup=build_main_menu_keyboard(MENU_FULL_TWO_COLUMN))
+    await send_main_menu(update, context, lang=lang)
 
 # -----------------------
 # MAIN wiring: schedule trading_job and wire admin commands
