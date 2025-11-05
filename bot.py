@@ -1579,10 +1579,12 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 [InlineKeyboardButton(t(lang,"settings_wallet"), callback_data="settings_set_wallet")],
                 [InlineKeyboardButton(t(lang,"back_to_menu"), callback_data="menu_exit")]
             ])
-            await query.edit_message_text(
-                t(lang, "settings_title") + "\n\n" + t(lang, "select_option"), 
-                reply_markup=kb
-            )
+            text = t(lang, "settings_title") + "\n\n" + t(lang, "select_option")
+            try:
+                await query.edit_message_text(text, reply_markup=kb)
+            except Exception:
+                # If editing fails (e.g., message is a photo), send a new message
+                await query.message.reply_text(text, reply_markup=kb)
         except Exception as e:
             logger.exception(f"Error displaying settings: {e}")
             await query.message.reply_text("⚠️ Error loading settings. Please try again.")
@@ -1599,11 +1601,13 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             async with async_session() as session:
                 lang = await get_user_language(session, query.from_user.id, update=update)
             # Add a back to menu button instead of showing the full menu inline
-            await query.edit_message_text(
-                t(lang, "info_text"), 
-                reply_markup=build_back_to_menu_keyboard(lang), 
-                parse_mode="HTML"
-            )
+            text = t(lang, "info_text")
+            kb = build_back_to_menu_keyboard(lang)
+            try:
+                await query.edit_message_text(text, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                # If editing fails (e.g., message is a photo), send a new message
+                await query.message.reply_text(text, reply_markup=kb, parse_mode="HTML")
         except Exception as e:
             logger.exception(f"Error displaying info: {e}")
             await query.message.reply_text("⚠️ Error loading information. Please try again.")
@@ -1644,12 +1648,16 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
     
     try:
         if hasattr(query_or_message, "message") and hasattr(query_or_message, "data"):
+            # It's a CallbackQuery
             try:
                 await query_or_message.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
                 return
             except Exception:
-                pass
-        await query_or_message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+                # If editing fails (e.g., message is a photo), send a new message
+                await query_or_message.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+        else:
+            # It's a regular Message
+            await query_or_message.reply_text(text, parse_mode="HTML", reply_markup=kb)
     except Exception:
         logger.exception("Failed to send balance message for user %s", user_id)
 
