@@ -516,6 +516,7 @@ TRANSLATIONS = {
         "lang_fr": "🇫🇷 Français",
         "lang_es": "🇪🇸 Español",
         "lang_ar": "🇸🇦 العربية",
+        "lang_zh": "🇨🇳 中文",
         "lang_set_success": "✅ Language changed successfully!",
         "lang_current": "Current language: {lang}",
         "welcome_text": (
@@ -866,11 +867,103 @@ TRANSLATIONS = {
         # Help command
         "help_message": "تحتاج مساعدة؟ انقر أدناه للدردشة مع الدعم:",
         "help_button": "💬 فتح محادثة الدعم",
+    },
+    "zh": {
+        "main_menu_title": "📋 主菜单",
+        "settings_title": "⚙️ 设置",
+        "settings_language": "🌍 语言",
+        "change_language": "更改语言",
+        "settings_wallet": "💳 设置/更新提现钱包",
+        "select_option": "选择一个选项：",
+        "back_to_menu": "« 返回菜单",
+        "lang_auto": "🔄 自动（从Telegram）",
+        "lang_en": "🇬🇧 英语",
+        "lang_fr": "🇫🇷 法语",
+        "lang_es": "🇪🇸 西班牙语",
+        "lang_ar": "🇸🇦 阿拉伯语",
+        "lang_zh": "🇨🇳 中文",
+        "lang_set_success": "✅ 语言更改成功！",
+        "lang_current": "当前语言：{lang}",
+        "welcome_text": (
+            "🎉 <b>欢迎来到AiCrypto机器人！</b>\n\n"
+            "🤖 您的个人AI交易助手\n"
+            "💹 全天候自动加密货币交易\n"
+            "📊 每日利润：1.25% - 1.5%\n\n"
+            "👇 选择下面的选项开始使用"
+        ),
+        "info_text": (
+            "🚀 <b>欢迎来到Ai Crypto Bot - 您的加密货币增长智能之路！</b>\n\n"
+            "准备好轻松增加您的加密货币投资了吗？Ai Crypto Bot利用尖端的人工智能全天候交易加密货币，旨在获得稳定的每日利润。我们独特的多层分析服务意味着AI不断学习和改进，使每笔交易都比上一笔更智能。\n\n"
+            "<b>为什么选择Ai Crypto Bot？</b>\n\n"
+            "• 🤖 <b>AI驱动交易：</b>先进的算法全天候工作，为您消除加密货币交易的猜测。\n\n"
+            "• 📈 <b>每日回报：</b>享受1.25%至1.5%的有竞争力的每日投资利润。\n\n"
+            "• 🔒 <b>安全与自动化：</b>您的资金被安全管理，交易完全自动化——只需存款并观看您的投资组合增长！\n\n"
+            "• 🌐 <b>广泛连接：</b>我们与Binance和Coinbase等领先的加密货币交易所集成，为您提供强大可靠的平台。\n\n"
+            "• 📊 <b>透明与知情：</b>接收每笔完成交易的实时通知，以及关于您的利润、金额和余额的详细每日报告。\n\n"
+            "• 💸 <b>灵活提现：</b>在您的前24小时后随时请求支付到您的钱包。请求会在12小时内及时处理。\n\n"
+            "• 👨‍💼 <b>专属支持：</b>从您指定的个人经理那里获得个性化帮助，24/7支持随时可用。\n\n"
+            "<b>开始很简单：</b>\n\n"
+            "1. <b>注册与存款：</b>要存款，点击\"投资\"，输入您想存入的金额，选择您偏好的加密网络，复制显示的钱包地址，发送资金，确认您的存款，并等待区块链确认。\n\n"
+            "2. <b>激活与交易：</b>您的存款从下一个交易周期开始生效，AI开始自动为您交易。\n\n"
+            "3. <b>追踪进度：</b>在\"我的历史\"中监控最近14天的交易历史，并接收每日表现报告。\n\n"
+            "4. <b>提取利润：</b>随时轻松请求支付！\n\n"
+            "Ai Crypto Bot不仅仅是一个机器人；它是您的个人智能交易伙伴，专为公众使用而设计，使加密货币投资对每个人都可访问且有利可图。"
+        ),
+        # Invest flow translations
+        "invest_enter_amount": "📈 输入您想要投资的金额（最低10 USDT，例如100.50）。发送/cancel取消。",
+        "invest_invalid_amount": "金额无效。发送一个正数，如100或50.50，或/cancel。",
+        "invest_minimum_amount": "❌ 最低存款为10 USDT。请至少输入10 USDT或/cancel。",
+        "invest_send_proof": "📥 存款{amount:.2f}$\n发送到钱包：\n钱包：<code>{wallet}</code>\n网络：<b>{network}</b>\n\n发送后，上传截图或发送交易哈希（txid）。",
+        "invest_no_amount": "没有待处理的投资金额。使用/invest重新开始。",
+        "invest_upload_proof": "请上传截图或发送txid，或/cancel。",
+        "invest_confirm_prompt": "收到凭证：<code>{proof}</code>\n如果您确实发送了{amount:.2f}$，请按确认。否则取消。",
+        "invest_confirm_yes": "✅ 我已发送准确金额",
+        "invest_confirm_no": "❌ 取消",
+        "invest_missing_data": "数据缺失。重新启动投资流程。",
+        "invest_request_success": "🧾 存款请求成功\n交易ID：D-{ref}\n金额：{amount:.2f} USDT（{network}）\n钱包：{wallet}\n网络：{network}\n状态：等待批准\n日期：{date}\n\n一旦确认，您的余额将自动更新。",
+        # Withdraw flow translations
+        "withdraw_enter_amount": "💸 输入您想要提现的金额（仅数字）。发送/cancel取消。",
+        "withdraw_invalid_amount": "金额无效。发送一个正数，如50或25.75，或/cancel。",
+        "withdraw_insufficient": "余额不足。可用：{balance:.2f}$。输入较小金额或/cancel。",
+        "withdraw_saved_wallet": "您保存的钱包：\n<code>{wallet}</code>\n网络：<b>{network}</b>\n\n或发送新钱包和可选网络。",
+        "withdraw_no_saved": "没有保存的钱包。发送钱包地址和可选网络（例如，0xabc... ERC20）。",
+        "withdraw_use_saved": "使用保存的钱包",
+        "withdraw_no_saved_found": "未找到保存的钱包。请发送钱包地址。",
+        "withdraw_send_wallet": "请发送钱包地址和可选网络。",
+        "withdraw_looks_command": "看起来像一个命令。仅发送钱包地址和可选网络。",
+        "withdraw_invalid_wallet": "此地址看起来无效。发送'yes'仍然保存或发送正确地址。",
+        "withdraw_confirm_prompt": "确认提现：\n金额：{amount:.2f}$\n钱包：<code>{wallet}</code>\n网络：<b>{network}</b>",
+        "withdraw_confirm_yes": "✅ 确认",
+        "withdraw_confirm_no": "❌ 取消",
+        "withdraw_wallet_saved": "✅ 钱包已保存：\n<code>{wallet}</code>\n网络：{network}",
+        "withdraw_missing_data": "提现数据缺失。重新开始提现。",
+        "withdraw_request_success": "🧾 提现请求成功\n交易ID：W-{ref}\n金额：{amount:.2f} USDT（{network}）\n钱包：{wallet}\n网络：{network}\n状态：等待批准\n日期：{date}\n\n管理员确认后，您的提现将被处理。",
+        # Referral translations
+        "referral_title": "👥 推荐计划",
+        "referral_intro": "分享您的推荐链接并赚取奖励！",
+        "referral_link_label": "🔗 您的链接：",
+        "referral_tap_to_copy": "👆 点击上面的链接复制",
+        "referral_stats_title": "📊 您的统计：",
+        "referral_total_count": "👤 总推荐数：{count}",
+        "referral_earnings": "💰 收益：{earnings:.2f} USDT",
+        "referral_how_it_works": "💡 如何运作：",
+        "referral_step1": "• 与朋友分享您的链接",
+        "referral_step2": "• 从他们的首次存款中赚取2%佣金",
+        "referral_step3": "• 收益立即添加到您的余额",
+        "referral_commission_info": "🎁 获得您朋友首次存款的2%！",
+        # Wallet command
+        "wallet_saved": "已保存的钱包：\n<code>{wallet}</code>\n网络：{network}",
+        "wallet_use_button": "下次提现使用此钱包",
+        "wallet_not_saved": "未保存提现钱包。使用/wallet <地址> [网络]设置。",
+        "wallet_send_address": "发送您的提现钱包地址和可选网络（例如，0xabc... ERC20）。",
+        # Help command
+        "help_message": "需要帮助？点击下面与支持聊天：",
+        "help_button": "💬 打开支持聊天",
     }
 }
 DEFAULT_LANG = "en"
-SUPPORTED_LANGS = ["en", "fr", "es", "ar"]
-LANG_DISPLAY = {"en":"English","fr":"Français","es":"Español","ar":"العربية"}
+SUPPORTED_LANGS = ["en", "fr", "es", "ar", "zh"]
+LANG_DISPLAY = {"en":"English","fr":"Français","es":"Español","ar":"العربية","zh":"中文"}
 
 def t(lang: str, key: str, **kwargs) -> str:
     bundle = TRANSLATIONS.get(lang, TRANSLATIONS[DEFAULT_LANG])
