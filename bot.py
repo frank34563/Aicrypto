@@ -1411,8 +1411,18 @@ async def trading_job():
                 
                 # Create spread for display
                 spread = random.uniform(0.001, 0.006)
-                buy_rate_raw = live_price * (1.0 - spread/2)
-                sell_rate_raw = live_price * (1.0 + spread/2 + random.uniform(0.0001, 0.0009))
+                
+                # For negative trades, sell should be lower than buy (buy high, sell low)
+                # For positive trades, sell should be higher than buy (buy low, sell high)
+                if is_negative_trade:
+                    # Negative trade: buy high, sell low
+                    buy_rate_raw = live_price * (1.0 + spread/2 + random.uniform(0.0001, 0.0009))
+                    sell_rate_raw = live_price * (1.0 - spread/2)
+                else:
+                    # Positive trade: buy low, sell high
+                    buy_rate_raw = live_price * (1.0 - spread/2)
+                    sell_rate_raw = live_price * (1.0 + spread/2 + random.uniform(0.0001, 0.0009))
+                
                 buy_rate = format_price(buy_rate_raw, decimals=8)
                 sell_rate = format_price(sell_rate_raw, decimals=8)
                 
