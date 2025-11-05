@@ -171,6 +171,17 @@ class DepositWallet(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ErrorLog(Base):
+    __tablename__ = 'error_logs'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    error_type = Column(String)  # Exception type
+    error_message = Column(String)  # Error message
+    user_id = Column(BigInteger, nullable=True)  # User who triggered the error (if applicable)
+    command = Column(String, nullable=True)  # Command that caused the error
+    traceback = Column(String)  # Full traceback
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 # DB init helpers
 async def _create_all_with_timeout(engine_to_use):
     async with engine_to_use.begin() as conn:
@@ -385,6 +396,25 @@ async def set_deposit_wallet(session: AsyncSession, coin: str, network: str, add
         session.add(wallet)
     
     await session.commit()
+
+# Error logging helper
+async def log_error(error_type: str, error_message: str, user_id: Optional[int] = None, 
+                   command: Optional[str] = None, traceback_str: Optional[str] = None):
+    """Log an error to the database"""
+    try:
+        async with async_session() as session:
+            error_log = ErrorLog(
+                error_type=error_type,
+                error_message=error_message[:500],  # Limit message length
+                user_id=user_id,
+                command=command,
+                traceback=traceback_str[:2000] if traceback_str else None,  # Limit traceback length
+                created_at=datetime.utcnow()
+            )
+            session.add(error_log)
+            await session.commit()
+    except Exception as e:
+        logger.exception(f"Failed to log error to database: {e}")
 
 async def mark_primary_deposit_wallet(session: AsyncSession, wallet_id: int):
     """Mark a deposit wallet as primary"""
@@ -2805,6 +2835,231 @@ async def cmd_view_notifications(update: Update, context: ContextTypes.DEFAULT_T
     
     await update.effective_message.reply_text(text, parse_mode="HTML")
 
+async def cmd_admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /admin_stats - Show analytics dashboard"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    async with async_session() as session:
+        # Total users
+        result = await session.execute(select(User))
+        all_users = result.scalars().all()
+        total_users = len(all_users)
+        
+        # Active investors (users with at least one credited investment)
+        result = await session.execute(
+            select(Transaction.user_id).where(
+                Transaction.type == 'invest',
+                Transaction.status == 'credited'
+            ).distinct()
+        )
+        active_investors = len(result.scalars().all())
+        
+        # Pending transactions
+        result = await session.execute(
+            select(Transaction).where(Transaction.status == 'pending')
+        )
+        pending_txs = result.scalars().all()
+        pending_count = len(pending_txs)
+        pending_invest = sum(float(tx.amount) for tx in pending_txs if tx.type == 'invest')
+        pending_withdraw = sum(float(tx.amount) for tx in pending_txs if tx.type == 'withdraw')
+        
+        # Today's volume
+        today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        result = await session.execute(
+            select(Transaction).where(
+                Transaction.created_at >= today_start,
+                Transaction.status == 'credited'
+            )
+        )
+        today_txs = result.scalars().all()
+        today_deposits = sum(float(tx.amount) for tx in today_txs if tx.type == 'invest')
+        today_withdrawals = sum(float(tx.amount) for tx in today_txs if tx.type == 'withdraw')
+        
+        # Total platform balances
+        total_balance = sum(float(u.balance or 0) for u in all_users)
+        total_in_process = sum(float(u.balance_in_process or 0) for u in all_users)
+        total_profit_paid = sum(float(u.total_profit or 0) for u in all_users)
+        
+        # New users today
+        new_today = sum(1 for u in all_users if u.joined_at and u.joined_at >= today_start)
+    
+    stats_text = (
+        f"📊 <b>Admin Analytics Dashboard</b>\n\n"
+        f"👥 <b>Users:</b>\n"
+        f"Total Users: {total_users}\n"
+        f"Active Investors: {active_investors}\n"
+        f"New Today: {new_today}\n\n"
+        f"⏳ <b>Pending Transactions:</b>\n"
+        f"Count: {pending_count}\n"
+        f"💰 Deposits: ${pending_invest:.2f}\n"
+        f"💸 Withdrawals: ${pending_withdraw:.2f}\n\n"
+        f"📈 <b>Today's Volume:</b>\n"
+        f"💰 Deposits: ${today_deposits:.2f}\n"
+        f"💸 Withdrawals: ${today_withdrawals:.2f}\n"
+        f"📊 Net: ${today_deposits - today_withdrawals:.2f}\n\n"
+        f"💼 <b>Platform Totals:</b>\n"
+        f"Available Balance: ${total_balance:.2f}\n"
+        f"In Process: ${total_in_process:.2f}\n"
+        f"Total Profits Paid: ${total_profit_paid:.2f}\n\n"
+        f"<i>Use /pending to manage transactions</i>"
+    )
+    
+    await update.effective_message.reply_text(stats_text, parse_mode="HTML")
+
+async def cmd_system_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /system_status - Show system health check"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    # Calculate bot uptime
+    if _scheduler and _scheduler.running:
+        scheduler_status = "✅ Running"
+    else:
+        scheduler_status = "❌ Not Running"
+    
+    # Check database connection
+    try:
+        async with async_session() as session:
+            await session.execute(select(User).limit(1))
+        db_status = "✅ Connected"
+    except Exception as e:
+        db_status = f"❌ Error: {str(e)[:50]}"
+    
+    # Check trading system
+    async with async_session() as session:
+        trading_enabled = await get_config(session, 'trading_enabled', '1')
+        use_binance = await get_config(session, 'use_binance_api', '1')
+    
+    trading_status = "✅ Enabled" if trading_enabled == '1' else "❌ Disabled"
+    binance_status = "✅ Enabled" if use_binance == '1' else "❌ Disabled"
+    
+    # Get recent error count
+    try:
+        async with async_session() as session:
+            one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+            result = await session.execute(
+                select(ErrorLog).where(ErrorLog.created_at >= one_hour_ago)
+            )
+            recent_errors = len(result.scalars().all())
+    except:
+        recent_errors = "N/A"
+    
+    status_text = (
+        f"🔧 <b>System Status</b>\n\n"
+        f"⚙️ <b>Core Systems:</b>\n"
+        f"Bot: ✅ Online\n"
+        f"Scheduler: {scheduler_status}\n"
+        f"Database: {db_status}\n\n"
+        f"🤖 <b>Trading System:</b>\n"
+        f"Trading: {trading_status}\n"
+        f"Binance API: {binance_status}\n\n"
+        f"⚠️ <b>Errors:</b>\n"
+        f"Last Hour: {recent_errors}\n\n"
+        f"<i>Use /error_logs to view recent errors</i>"
+    )
+    
+    await update.effective_message.reply_text(status_text, parse_mode="HTML")
+
+async def cmd_error_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /error_logs - View recent error logs"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    try:
+        async with async_session() as session:
+            # Get last 10 errors
+            result = await session.execute(
+                select(ErrorLog).order_by(ErrorLog.created_at.desc()).limit(10)
+            )
+            errors = result.scalars().all()
+        
+        if not errors:
+            await update.effective_message.reply_text("No errors logged recently.")
+            return
+        
+        lines = ["🔴 <b>Recent Errors (Last 10)</b>\n"]
+        for err in errors:
+            time_str = err.created_at.strftime("%Y-%m-%d %H:%M:%S")
+            user_info = f"User: {err.user_id}" if err.user_id else "System"
+            cmd_info = f"Cmd: {err.command}" if err.command else ""
+            lines.append(
+                f"\n<b>{time_str}</b>\n"
+                f"Type: {err.error_type}\n"
+                f"Message: {err.error_message[:100]}\n"
+                f"{user_info} {cmd_info}"
+            )
+        
+        error_text = "\n".join(lines)
+        await update.effective_message.reply_text(error_text, parse_mode="HTML")
+    except Exception as e:
+        await update.effective_message.reply_text(f"Error retrieving logs: {str(e)}")
+
+async def cmd_send_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /send_reminders - Send reminders for pending transactions over 24h"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    try:
+        async with async_session() as session:
+            # Find pending transactions older than 24 hours
+            twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+            result = await session.execute(
+                select(Transaction).where(
+                    Transaction.status == 'pending',
+                    Transaction.created_at < twenty_four_hours_ago
+                )
+            )
+            old_pending = result.scalars().all()
+        
+        if not old_pending:
+            await update.effective_message.reply_text("No pending transactions older than 24 hours.")
+            return
+        
+        sent_count = 0
+        for tx in old_pending:
+            try:
+                hours_old = int((datetime.utcnow() - tx.created_at).total_seconds() / 3600)
+                if tx.type == 'invest':
+                    message = (
+                        f"⏰ <b>Deposit Reminder</b>\n\n"
+                        f"Your deposit of ${float(tx.amount):.2f} has been pending for {hours_old} hours.\n"
+                        f"Transaction ID: D-{tx.ref}\n\n"
+                        f"If you've completed the payment, please wait for admin approval.\n"
+                        f"If not, please complete your deposit to start earning!"
+                    )
+                else:  # withdraw
+                    message = (
+                        f"⏰ <b>Withdrawal Reminder</b>\n\n"
+                        f"Your withdrawal of ${float(tx.amount):.2f} has been pending for {hours_old} hours.\n"
+                        f"Transaction ID: W-{tx.ref}\n\n"
+                        f"Our team is processing your request. You'll be notified once completed."
+                    )
+                
+                await context.bot.send_message(
+                    chat_id=tx.user_id,
+                    text=message,
+                    parse_mode="HTML"
+                )
+                sent_count += 1
+            except Exception as e:
+                logger.exception(f"Failed to send reminder to user {tx.user_id}")
+        
+        await update.effective_message.reply_text(
+            f"✅ Sent {sent_count} reminder(s) for {len(old_pending)} pending transaction(s)."
+        )
+        await post_admin_log(context.bot, f"Admin sent {sent_count} reminders")
+    except Exception as e:
+        await update.effective_message.reply_text(f"Error sending reminders: {str(e)}")
+
 async def cmd_set_deposit_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /set_deposit_wallet <coin> <network> <address> [primary]"""
     user_id = update.effective_user.id
@@ -2979,6 +3234,11 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/send_broadcast - Send broadcast to all users\n"
         "/send_new_user_alert - Send alert to non-investors\n"
         "/view_notifications - View current messages\n\n"
+        "**Analytics:**\n"
+        "/admin_stats - View analytics dashboard\n"
+        "/system_status - System health check\n"
+        "/error_logs - View recent errors\n"
+        "/send_reminders - Send reminders for old pending txs\n\n"
         "**Admin:**\n"
         "/admin_cmds - Show this message\n"
         "/pending - Show pending transactions"
@@ -3267,6 +3527,65 @@ async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TY
         await update.callback_query.answer()
     return ConversationHandler.END
 
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User command: /stats - Show personal statistics"""
+    user_id = update.effective_user.id
+    
+    async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
+        user = await get_user(session, user_id)
+        
+        # Get user's transaction history
+        result = await session.execute(
+            select(Transaction).where(
+                Transaction.user_id == user_id,
+                Transaction.type == 'invest',
+                Transaction.status == 'credited'
+            ).order_by(Transaction.created_at)
+        )
+        investments = result.scalars().all()
+        
+        # Calculate stats
+        total_invested = sum(float(inv.amount) for inv in investments)
+        total_earned = float(user.get('total_profit', 0))
+        current_balance = float(user.get('balance', 0))
+        balance_in_process = float(user.get('balance_in_process', 0))
+        referral_earnings = float(user.get('referral_earnings', 0))
+        referral_count = int(user.get('referral_count', 0))
+        
+        # Calculate days active
+        joined_at = user.get('joined_at')
+        if joined_at:
+            days_active = (datetime.utcnow() - joined_at).days
+        else:
+            days_active = 0
+        
+        # Calculate ROI
+        if total_invested > 0:
+            roi_percent = (total_earned / total_invested) * 100
+        else:
+            roi_percent = 0.0
+    
+    stats_text = (
+        f"📊 <b>Your Statistics</b>\n\n"
+        f"💼 <b>Investment Overview:</b>\n"
+        f"💰 Total Invested: ${total_invested:.2f}\n"
+        f"📈 Total Earned: ${total_earned:.2f}\n"
+        f"📊 ROI: {roi_percent:.2f}%\n\n"
+        f"💵 <b>Balances:</b>\n"
+        f"✅ Available: ${current_balance:.2f}\n"
+        f"⏳ In Process: ${balance_in_process:.2f}\n\n"
+        f"👥 <b>Referrals:</b>\n"
+        f"👤 Total Referrals: {referral_count}\n"
+        f"💸 Referral Earnings: ${referral_earnings:.2f}\n\n"
+        f"📅 <b>Activity:</b>\n"
+        f"🗓 Days Active: {days_active}\n"
+        f"📥 Total Deposits: {len(investments)}\n\n"
+        f"<i>Keep growing your portfolio! 🚀</i>"
+    )
+    
+    await update.effective_message.reply_text(stats_text, parse_mode="HTML")
+
 async def balance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with async_session() as session:
         await send_balance_message(update.effective_message, session, update.effective_user.id)
@@ -3474,6 +3793,15 @@ def main():
     application.add_handler(CommandHandler("send_broadcast", cmd_send_broadcast))
     application.add_handler(CommandHandler("send_new_user_alert", cmd_send_new_user_alert))
     application.add_handler(CommandHandler("view_notifications", cmd_view_notifications))
+    
+    # Analytics and System commands
+    application.add_handler(CommandHandler("admin_stats", cmd_admin_stats))
+    application.add_handler(CommandHandler("system_status", cmd_system_status))
+    application.add_handler(CommandHandler("error_logs", cmd_error_logs))
+    application.add_handler(CommandHandler("send_reminders", cmd_send_reminders))
+    
+    # User stats command
+    application.add_handler(CommandHandler("stats", stats_command))
     
     # Admin helper commands
     application.add_handler(CommandHandler("admin_cmds", cmd_admin_cmds))
