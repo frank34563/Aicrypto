@@ -90,6 +90,9 @@ GLOBAL_TRADE_PERCENT = 0.15  # default 0.15% per trade (mid-range between 0.05% 
 GLOBAL_TRADES_PER_DAY = 15  # default 15 trades per day (96 minute frequency)
 GLOBAL_NEGATIVE_TRADES_PER_DAY = 1  # default 1 negative trade per day
 
+# Minimum deposit amount in USDT
+MIN_DEPOSIT_AMOUNT = 10.0  # Minimum investment deposit is 10 USDT
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 logger.info("Configured ADMIN_ID=%s", ADMIN_ID)
@@ -541,8 +544,9 @@ TRANSLATIONS = {
             "Ai Crypto Bot is more than just a bot; it's your personal, intelligent trading partner designed for public use, making crypto investment accessible and profitable for everyone."
         ),
         # Invest flow translations
-        "invest_enter_amount": "📈 Enter the amount you want to invest (numbers only, e.g., 100.50). Send /cancel to abort.",
+        "invest_enter_amount": "📈 Enter the amount you want to invest (minimum 10 USDT, e.g., 100.50). Send /cancel to abort.",
         "invest_invalid_amount": "Invalid amount. Send a positive number like 100 or 50.50, or /cancel.",
+        "invest_minimum_amount": "❌ Minimum deposit is 10 USDT. Please enter at least 10 USDT or /cancel.",
         "invest_send_proof": "📥 Deposit {amount:.2f}$\nSend to wallet:\nWallet: <code>{wallet}</code>\nNetwork: <b>{network}</b>\n\nAfter sending, upload a screenshot OR send the transaction hash (txid).",
         "invest_no_amount": "No pending invest amount. Start again with /invest.",
         "invest_upload_proof": "Please upload a screenshot or send the txid, or /cancel.",
@@ -631,8 +635,9 @@ TRANSLATIONS = {
             "Ai Crypto Bot est plus qu'un simple bot; c'est votre partenaire de trading intelligent personnel conçu pour un usage public, rendant l'investissement crypto accessible et rentable pour tous."
         ),
         # Invest flow translations
-        "invest_enter_amount": "📈 Entrez le montant que vous souhaitez investir (chiffres uniquement, ex: 100.50). Envoyez /cancel pour annuler.",
+        "invest_enter_amount": "📈 Entrez le montant que vous souhaitez investir (minimum 10 USDT, ex: 100.50). Envoyez /cancel pour annuler.",
         "invest_invalid_amount": "Montant invalide. Envoyez un nombre positif comme 100 ou 50.50, ou /cancel.",
+        "invest_minimum_amount": "❌ Le dépôt minimum est de 10 USDT. Veuillez entrer au moins 10 USDT ou /cancel.",
         "invest_send_proof": "📥 Dépôt de {amount:.2f}$\nEnvoyez à:\nPortefeuille: <code>{wallet}</code>\nRéseau: <b>{network}</b>\n\nAprès l'envoi, téléchargez une capture d'écran OU envoyez le hash de transaction (txid).",
         "invest_no_amount": "Aucun montant d'investissement en attente. Recommencez avec /invest.",
         "invest_upload_proof": "Veuillez télécharger une capture d'écran ou envoyer le txid, ou /cancel.",
@@ -721,8 +726,9 @@ TRANSLATIONS = {
             "Ai Crypto Bot es más que un simple bot; es tu socio de trading inteligente personal diseñado para uso público, haciendo la inversión cripto accesible y rentable para todos."
         ),
         # Invest flow translations
-        "invest_enter_amount": "📈 Ingresa el monto que deseas invertir (solo números, ej: 100.50). Envía /cancel para cancelar.",
+        "invest_enter_amount": "📈 Ingresa el monto que deseas invertir (mínimo 10 USDT, ej: 100.50). Envía /cancel para cancelar.",
         "invest_invalid_amount": "Monto inválido. Envía un número positivo como 100 o 50.50, o /cancel.",
+        "invest_minimum_amount": "❌ El depósito mínimo es 10 USDT. Por favor ingresa al menos 10 USDT o /cancel.",
         "invest_send_proof": "📥 Depósito de {amount:.2f}$\nEnviar a:\nBilletera: <code>{wallet}</code>\nRed: <b>{network}</b>\n\nDespués de enviar, sube una captura de pantalla O envía el hash de transacción (txid).",
         "invest_no_amount": "No hay monto de inversión pendiente. Comienza de nuevo con /invest.",
         "invest_upload_proof": "Por favor sube una captura de pantalla o envía el txid, o /cancel.",
@@ -811,8 +817,9 @@ TRANSLATIONS = {
             "Ai Crypto Bot هو أكثر من مجرد بوت؛ إنه شريك التداول الذكي الشخصي المصمم للاستخدام العام، مما يجعل استثمار العملات المشفرة في متناول الجميع ومربحاً للجميع."
         ),
         # Invest flow translations
-        "invest_enter_amount": "📈 أدخل المبلغ الذي تريد استثماره (أرقام فقط، مثال: 100.50). أرسل /cancel للإلغاء.",
+        "invest_enter_amount": "📈 أدخل المبلغ الذي تريد استثماره (الحد الأدنى 10 USDT، مثال: 100.50). أرسل /cancel للإلغاء.",
         "invest_invalid_amount": "مبلغ غير صحيح. أرسل رقماً موجباً مثل 100 أو 50.50، أو /cancel.",
+        "invest_minimum_amount": "❌ الحد الأدنى للإيداع هو 10 USDT. الرجاء إدخال 10 USDT على الأقل أو /cancel.",
         "invest_send_proof": "📥 إيداع {amount:.2f}$\nأرسل إلى:\nالمحفظة: <code>{wallet}</code>\nالشبكة: <b>{network}</b>\n\nبعد الإرسال، قم بتحميل لقطة شاشة أو أرسل معرف المعاملة (txid).",
         "invest_no_amount": "لا يوجد مبلغ استثمار معلق. ابدأ من جديد بـ /invest.",
         "invest_upload_proof": "الرجاء تحميل لقطة شاشة أو إرسال txid، أو /cancel.",
@@ -1701,6 +1708,12 @@ async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_T
     except Exception:
         await msg.reply_text(t(lang, "invest_invalid_amount"))
         return INVEST_AMOUNT
+    
+    # Check minimum deposit amount
+    if amount < MIN_DEPOSIT_AMOUNT:
+        await msg.reply_text(t(lang, "invest_minimum_amount"))
+        return INVEST_AMOUNT
+    
     amount = round(amount, 2)
     context.user_data['invest_amount'] = amount
     
