@@ -594,6 +594,18 @@ TRANSLATIONS = {
         # Help command
         "help_message": "Need assistance? Click below to chat with support:",
         "help_button": "💬 Open Support Chat",
+        # Balance page
+        "balance_title": "Your Account Balance",
+        "balance_available": "Available",
+        "balance_in_process": "In Process",
+        "balance_today_profit": "Today's Profit",
+        "balance_total_profit": "Total Profit",
+        "balance_manager": "Manager",
+        # History page
+        "history_no_transactions": "🧾 History: no transactions found.",
+        "history_prev": "⬅ Prev",
+        "history_next": "Next ➡",
+        "history_exit": "Exit ❌",
     },
     "fr": {
         "main_menu_title": "📋 Menu Principal",
@@ -684,7 +696,19 @@ TRANSLATIONS = {
         "wallet_send_address": "Envoyez l'adresse de votre portefeuille de retrait et le réseau facultatif (ex: 0xabc... ERC20).",
         # Help command
         "help_message": "Besoin d'aide? Cliquez ci-dessous pour discuter avec le support:",
-        "help_button": "💬 Ouvrir le Chat Support",
+        "help_button": "💬 Ouvrir le Chat de Support",
+        # Balance page
+        "balance_title": "Solde de Votre Compte",
+        "balance_available": "Disponible",
+        "balance_in_process": "En Cours",
+        "balance_today_profit": "Profit d'Aujourd'hui",
+        "balance_total_profit": "Profit Total",
+        "balance_manager": "Gestionnaire",
+        # History page
+        "history_no_transactions": "🧾 Historique: aucune transaction trouvée.",
+        "history_prev": "⬅ Préc",
+        "history_next": "Suiv ➡",
+        "history_exit": "Quitter ❌",
     },
     "es": {
         "main_menu_title": "📋 Menú Principal",
@@ -776,6 +800,18 @@ TRANSLATIONS = {
         # Help command
         "help_message": "¿Necesitas ayuda? Haz clic abajo para chatear con soporte:",
         "help_button": "💬 Abrir Chat de Soporte",
+        # Balance page
+        "balance_title": "Saldo de Tu Cuenta",
+        "balance_available": "Disponible",
+        "balance_in_process": "En Proceso",
+        "balance_today_profit": "Ganancia de Hoy",
+        "balance_total_profit": "Ganancia Total",
+        "balance_manager": "Gerente",
+        # History page
+        "history_no_transactions": "🧾 Historial: no se encontraron transacciones.",
+        "history_prev": "⬅ Ant",
+        "history_next": "Sig ➡",
+        "history_exit": "Salir ❌",
     },
     "ar": {
         "main_menu_title": "📋 القائمة الرئيسية",
@@ -867,6 +903,18 @@ TRANSLATIONS = {
         # Help command
         "help_message": "تحتاج مساعدة؟ انقر أدناه للدردشة مع الدعم:",
         "help_button": "💬 فتح محادثة الدعم",
+        # Balance page
+        "balance_title": "رصيد حسابك",
+        "balance_available": "متاح",
+        "balance_in_process": "قيد المعالجة",
+        "balance_today_profit": "ربح اليوم",
+        "balance_total_profit": "الربح الإجمالي",
+        "balance_manager": "المدير",
+        # History page
+        "history_no_transactions": "🧾 السجل: لم يتم العثور على معاملات.",
+        "history_prev": "⬅ السابق",
+        "history_next": "التالي ➡",
+        "history_exit": "خروج ❌",
     },
     "zh": {
         "main_menu_title": "📋 主菜单",
@@ -959,6 +1007,18 @@ TRANSLATIONS = {
         # Help command
         "help_message": "需要帮助？点击下面与支持聊天：",
         "help_button": "💬 打开支持聊天",
+        # Balance page
+        "balance_title": "您的账户余额",
+        "balance_available": "可用",
+        "balance_in_process": "处理中",
+        "balance_today_profit": "今日利润",
+        "balance_total_profit": "总利润",
+        "balance_manager": "经理",
+        # History page
+        "history_no_transactions": "🧾 历史：未找到交易记录。",
+        "history_prev": "⬅ 上一页",
+        "history_next": "下一页 ➡",
+        "history_exit": "退出 ❌",
     }
 }
 DEFAULT_LANG = "en"
@@ -1019,15 +1079,15 @@ def build_back_to_menu_keyboard(lang: str = DEFAULT_LANG) -> InlineKeyboardMarku
 
 def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang: str = DEFAULT_LANG) -> InlineKeyboardMarkup:
     labels = {
-        "balance": "💰 " + {"en":"Balance","fr":"Solde","es":"Saldo","ar":"الرصيد"}.get(lang, "Balance"),
-        "invest": "📈 " + {"en":"Invest","fr":"Investir","es":"Invertir","ar":"استثمر"}.get(lang, "Invest"),
-        "history": "🧾 " + {"en":"History","fr":"Historique","es":"Historial","ar":"السجل"}.get(lang, "History"),
-        "withdraw": "💸 " + {"en":"Withdraw","fr":"Retirer","es":"Retirar","ar":"سحب"}.get(lang, "Withdraw"),
-        "referrals": "👥 " + {"en":"Referrals","fr":"Fermes","es":"Referidos","ar":"الإحالات"}.get(lang, "Referrals"),
-        "settings": "⚙️ " + {"en":"Settings","fr":"Paramètres","es":"Ajustes","ar":"الإعدادات"}.get(lang, "Settings"),
-        "information": "ℹ️ " + {"en":"Information","fr":"Information","es":"Información","ar":"المعلومات"}.get(lang, "Information"),
-        "help": "❓ " + {"en":"Help","fr":"Aide","es":"Ayuda","ar":"مساعدة"}.get(lang, "Help"),
-        "exit": "⨉ " + {"en":"Exit","fr":"Quitter","es":"Salir","ar":"خروج"}.get(lang, "Exit"),
+        "balance": "💰 " + {"en":"Balance","fr":"Solde","es":"Saldo","ar":"الرصيد","zh":"余额"}.get(lang, "Balance"),
+        "invest": "📈 " + {"en":"Invest","fr":"Investir","es":"Invertir","ar":"استثمر","zh":"投资"}.get(lang, "Invest"),
+        "history": "🧾 " + {"en":"History","fr":"Historique","es":"Historial","ar":"السجل","zh":"历史"}.get(lang, "History"),
+        "withdraw": "💸 " + {"en":"Withdraw","fr":"Retirer","es":"Retirar","ar":"سحب","zh":"提现"}.get(lang, "Withdraw"),
+        "referrals": "👥 " + {"en":"Referrals","fr":"Fermes","es":"Referidos","ar":"الإحالات","zh":"推荐"}.get(lang, "Referrals"),
+        "settings": "⚙️ " + {"en":"Settings","fr":"Paramètres","es":"Ajustes","ar":"الإعدادات","zh":"设置"}.get(lang, "Settings"),
+        "information": "ℹ️ " + {"en":"Information","fr":"Information","es":"Información","ar":"المعلومات","zh":"信息"}.get(lang, "Information"),
+        "help": "❓ " + {"en":"Help","fr":"Aide","es":"Ayuda","ar":"مساعدة","zh":"帮助"}.get(lang, "Help"),
+        "exit": "⨉ " + {"en":"Exit","fr":"Quitter","es":"Salir","ar":"خروج","zh":"退出"}.get(lang, "Exit"),
     }
 
     if not full_two_column:
@@ -1754,12 +1814,12 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
     total_profit = format_price(float(user.get('total_profit') or 0), decimals=2)
     
     text = (
-        f"💰 <b>Your Account Balance</b>\n\n"
-        f"💵 <b>Available:</b> {balance} USDT\n"
-        f"⏳ <b>In Process:</b> {in_process} USDT\n\n"
-        f"📊 <b>Today's Profit:</b> {daily_profit} USDT\n"
-        f"📈 <b>Total Profit:</b> {total_profit} USDT\n\n"
-        f"👤 <b>Manager:</b> {SUPPORT_USER}"
+        f"💰 <b>{t(lang, 'balance_title')}</b>\n\n"
+        f"💵 <b>{t(lang, 'balance_available')}:</b> {balance} USDT\n"
+        f"⏳ <b>{t(lang, 'balance_in_process')}:</b> {in_process} USDT\n\n"
+        f"📊 <b>{t(lang, 'balance_today_profit')}:</b> {daily_profit} USDT\n"
+        f"📈 <b>{t(lang, 'balance_total_profit')}:</b> {total_profit} USDT\n\n"
+        f"👤 <b>{t(lang, 'balance_manager')}:</b> {SUPPORT_USER}"
     )
     
     kb = build_back_to_menu_keyboard(lang)
@@ -3624,11 +3684,15 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if args and args[0].isdigit():
         page = max(1, int(args[0]))
     per_page = 10
+    
+    # Get user language
     async with async_session() as session:
+        lang = await get_user_language(session, user_id, update)
         result = await session.execute(select(Transaction).where(Transaction.user_id == user_id).order_by(Transaction.created_at.desc()))
         txs: List[Transaction] = result.scalars().all()
+    
     if not txs:
-        await ef_msg.reply_text("🧾 History: no transactions found.")
+        await ef_msg.reply_text(t(lang, "history_no_transactions"))
         return
     total = len(txs)
     total_pages = (total + per_page - 1) // per_page
@@ -3642,10 +3706,10 @@ async def history_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     nav = []
     if page > 1:
-        nav.append(InlineKeyboardButton("⬅ Prev", callback_data=f"history_page_{page-1}_{user_id}"))
+        nav.append(InlineKeyboardButton(t(lang, "history_prev"), callback_data=f"history_page_{page-1}_{user_id}"))
     if page < total_pages:
-        nav.append(InlineKeyboardButton("Next ➡", callback_data=f"history_page_{page+1}_{user_id}"))
-    nav.append(InlineKeyboardButton("Exit ❌", callback_data="menu_exit"))
+        nav.append(InlineKeyboardButton(t(lang, "history_next"), callback_data=f"history_page_{page+1}_{user_id}"))
+    nav.append(InlineKeyboardButton(t(lang, "history_exit"), callback_data="menu_exit"))
     if nav:
         kb_rows.append(nav)
 
