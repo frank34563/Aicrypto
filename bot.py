@@ -64,8 +64,8 @@ except Exception:
 ADMIN_LOG_CHAT_ID = os.getenv('ADMIN_LOG_CHAT_ID')  # optional admin log chat id
 MASTER_WALLET = os.getenv('MASTER_WALLET', 'TAbc...')
 MASTER_NETWORK = os.getenv('MASTER_NETWORK', 'TRC20')
-SUPPORT_USER = os.getenv('SUPPORT_USER', '@AiCrypto_Support1')
-SUPPORT_URL = os.getenv('SUPPORT_URL') or (f"https://t.me/{SUPPORT_USER.lstrip('@')}" if SUPPORT_USER else "https://t.me/")
+SUPPORT_USER = os.getenv('SUPPORT_USER', '@NexoAi_Support')
+SUPPORT_URL = os.getenv('SUPPORT_URL', f"https://t.me/NexoAi_Support")
 
 MENU_FULL_TWO_COLUMN = os.getenv('MENU_FULL_TWO_COLUMN', 'true').lower() in ('1','true','yes','on')
 DATABASE_URL = os.getenv('DATABASE_URL')
@@ -73,7 +73,7 @@ DATABASE_URL = os.getenv('DATABASE_URL')
 # Main menu image configuration
 MAIN_MENU_IMAGE_URL = os.getenv('MAIN_MENU_IMAGE_URL', 'assets/Main Menu.jpg')  # Can be URL or local file path
 MAIN_MENU_CAPTION = (
-    "🚀 Welcome to Ai Crypto Bot - Your Smart Path to Crypto Growth!\n\n"
+    "🚀 Welcome to Nexo Trading Bot - Your Smart Path to Crypto Growth!\n\n"
     "🤖 Your Personal AI Trading Assistant\n"
     "💹 Automated Crypto Trading 24/7\n\n"
     "📋 Main Menu"
@@ -520,16 +520,16 @@ TRANSLATIONS = {
         "lang_set_success": "✅ Language changed successfully!",
         "lang_current": "Current language: {lang}",
         "welcome_text": (
-            "🎉 <b>Welcome to AiCrypto Bot!</b>\n\n"
+            "🎉 <b>Welcome to Nexo Trading Bot!</b>\n\n"
             "🤖 Your Personal AI Trading Assistant\n"
             "💹 Automated Crypto Trading 24/7\n"
             "📊 Daily Profit: 1.25% - 1.5%\n\n"
             "👇 Select an option below to get started"
         ),
         "info_text": (
-            "🚀 <b>Welcome to Ai Crypto Bot - Your Smart Path to Crypto Growth!</b>\n\n"
-            "Ready to effortlessly grow your crypto investments? Ai Crypto Bot harnesses cutting-edge Artificial Intelligence to trade cryptocurrencies 24/7, aiming for consistent daily profits. Our unique multi-level analytical services mean the AI is constantly learning and improving, making every trade smarter than the last.\n\n"
-            "<b>Why Choose Ai Crypto Bot?</b>\n\n"
+            "🚀 <b>Welcome to Nexo Trading Bot - Your Smart Path to Crypto Growth!</b>\n\n"
+            "Ready to effortlessly grow your crypto investments? Nexo Trading Bot harnesses cutting-edge Artificial Intelligence to trade cryptocurrencies 24/7, aiming for consistent daily profits. Our unique multi-level analytical services mean the AI is constantly learning and improving, making every trade smarter than the last.\n\n"
+            "<b>Why Choose Nexo Trading Bot?</b>\n\n"
             "• 🤖 <b>AI-Powered Trading:</b> Advanced algorithms work around the clock, taking the guesswork out of crypto trading for you.\n\n"
             "• 📈 <b>Daily Returns:</b> Enjoy competitive daily profits ranging from 1.25% to 1.5% on your investments.\n\n"
             "• 🔒 <b>Secure &amp; Automated:</b> Your funds are managed securely, and trading is fully automated – just deposit and watch your portfolio grow!\n\n"
@@ -542,7 +542,7 @@ TRANSLATIONS = {
             "2. <b>Activate &amp; Trade:</b> Your deposit becomes active from the next trading cycle, and the AI begins trading for you automatically.\n\n"
             "3. <b>Track Your Progress:</b> Monitor your trading history in \"My History\" for the last 14 days and receive daily performance reports.\n\n"
             "4. <b>Withdraw Your Profits:</b> Easily request a payout whenever you're ready!\n\n"
-            "Ai Crypto Bot is more than just a bot; it's your personal, intelligent trading partner designed for public use, making crypto investment accessible and profitable for everyone."
+            "Nexo Trading Bot is more than just a bot; it's your personal, intelligent trading partner designed for public use, making crypto investment accessible and profitable for everyone."
         ),
         # Invest flow translations
         "invest_enter_amount": "📈 Enter the amount you want to invest (minimum 10 USDT, e.g., 100.50). Send /cancel to abort.",
@@ -623,16 +623,16 @@ TRANSLATIONS = {
         "lang_set_success": "✅ Langue modifiée avec succès!",
         "lang_current": "Langue actuelle : {lang}",
         "welcome_text": (
-            "🎉 <b>Bienvenue sur AiCrypto Bot!</b>\n\n"
+            "🎉 <b>Bienvenue sur Nexo Trading Bot!</b>\n\n"
             "🤖 Votre Assistant de Trading IA Personnel\n"
             "💹 Trading Crypto Automatisé 24/7\n"
             "📊 Profit Quotidien: 1.25% - 1.5%\n\n"
             "👇 Sélectionnez une option ci-dessous pour commencer"
         ),
         "info_text": (
-            "🚀 <b>Bienvenue sur Ai Crypto Bot - Votre Chemin Intelligent vers la Croissance Crypto!</b>\n\n"
-            "Prêt à développer sans effort vos investissements crypto? Ai Crypto Bot exploite l'Intelligence Artificielle de pointe pour trader les cryptomonnaies 24/7, visant des profits quotidiens constants. Nos services analytiques multi-niveaux uniques signifient que l'IA apprend et s'améliore constamment, rendant chaque trade plus intelligent que le précédent.\n\n"
-            "<b>Pourquoi Choisir Ai Crypto Bot?</b>\n\n"
+            "🚀 <b>Bienvenue sur Nexo Trading Bot - Votre Chemin Intelligent vers la Croissance Crypto!</b>\n\n"
+            "Prêt à développer sans effort vos investissements crypto? Nexo Trading Bot exploite l'Intelligence Artificielle de pointe pour trader les cryptomonnaies 24/7, visant des profits quotidiens constants. Nos services analytiques multi-niveaux uniques signifient que l'IA apprend et s'améliore constamment, rendant chaque trade plus intelligent que le précédent.\n\n"
+            "<b>Pourquoi Choisir Nexo Trading Bot?</b>\n\n"
             "• 🤖 <b>Trading Alimenté par l'IA:</b> Des algorithmes avancés travaillent 24h/24, éliminant les conjectures du trading crypto pour vous.\n\n"
             "• 📈 <b>Rendements Quotidiens:</b> Profitez de profits quotidiens compétitifs allant de 1,25% à 1,5% sur vos investissements.\n\n"
             "• 🔒 <b>Sécurisé &amp; Automatisé:</b> Vos fonds sont gérés en toute sécurité, et le trading est entièrement automatisé – déposez simplement et regardez votre portefeuille croître!\n\n"
@@ -645,7 +645,7 @@ TRANSLATIONS = {
             "2. <b>Activer &amp; Trader:</b> Votre dépôt devient actif dès le prochain cycle de trading, et l'IA commence à trader pour vous automatiquement.\n\n"
             "3. <b>Suivre Votre Progression:</b> Surveillez votre historique de trading dans \"Mon Historique\" pour les 14 derniers jours et recevez des rapports de performance quotidiens.\n\n"
             "4. <b>Retirer Vos Profits:</b> Demandez facilement un paiement quand vous êtes prêt!\n\n"
-            "Ai Crypto Bot est plus qu'un simple bot; c'est votre partenaire de trading intelligent personnel conçu pour un usage public, rendant l'investissement crypto accessible et rentable pour tous."
+            "Nexo Trading Bot est plus qu'un simple bot; c'est votre partenaire de trading intelligent personnel conçu pour un usage public, rendant l'investissement crypto accessible et rentable pour tous."
         ),
         # Invest flow translations
         "invest_enter_amount": "📈 Entrez le montant que vous souhaitez investir (minimum 10 USDT, ex: 100.50). Envoyez /cancel pour annuler.",
@@ -726,16 +726,16 @@ TRANSLATIONS = {
         "lang_set_success": "✅ ¡Idioma cambiado exitosamente!",
         "lang_current": "Idioma actual: {lang}",
         "welcome_text": (
-            "🎉 <b>¡Bienvenido a AiCrypto Bot!</b>\n\n"
+            "🎉 <b>¡Bienvenido a Nexo Trading Bot!</b>\n\n"
             "🤖 Tu Asistente de Trading IA Personal\n"
             "💹 Trading Cripto Automatizado 24/7\n"
             "📊 Ganancias Diarias: 1.25% - 1.5%\n\n"
             "👇 Selecciona una opción a continuación para empezar"
         ),
         "info_text": (
-            "🚀 <b>¡Bienvenido a Ai Crypto Bot - Tu Camino Inteligente hacia el Crecimiento Cripto!</b>\n\n"
-            "¿Listo para hacer crecer sin esfuerzo tus inversiones cripto? Ai Crypto Bot aprovecha la Inteligencia Artificial de vanguardia para operar criptomonedas 24/7, buscando ganancias diarias consistentes. Nuestros servicios analíticos multinivel únicos significan que la IA está aprendiendo y mejorando constantemente, haciendo cada operación más inteligente que la anterior.\n\n"
-            "<b>¿Por Qué Elegir Ai Crypto Bot?</b>\n\n"
+            "🚀 <b>¡Bienvenido a Nexo Trading Bot - Tu Camino Inteligente hacia el Crecimiento Cripto!</b>\n\n"
+            "¿Listo para hacer crecer sin esfuerzo tus inversiones cripto? Nexo Trading Bot aprovecha la Inteligencia Artificial de vanguardia para operar criptomonedas 24/7, buscando ganancias diarias consistentes. Nuestros servicios analíticos multinivel únicos significan que la IA está aprendiendo y mejorando constantemente, haciendo cada operación más inteligente que la anterior.\n\n"
+            "<b>¿Por Qué Elegir Nexo Trading Bot?</b>\n\n"
             "• 🤖 <b>Trading Impulsado por IA:</b> Algoritmos avanzados trabajan las 24 horas, eliminando las conjeturas del trading cripto para ti.\n\n"
             "• 📈 <b>Retornos Diarios:</b> Disfruta de ganancias diarias competitivas que van del 1.25% al 1.5% en tus inversiones.\n\n"
             "• 🔒 <b>Seguro &amp; Automatizado:</b> Tus fondos se gestionan de forma segura, y el trading está completamente automatizado – ¡solo deposita y observa crecer tu cartera!\n\n"
@@ -748,7 +748,7 @@ TRANSLATIONS = {
             "2. <b>Activar &amp; Operar:</b> Tu depósito se activa desde el próximo ciclo de trading, y la IA comienza a operar para ti automáticamente.\n\n"
             "3. <b>Seguir Tu Progreso:</b> Monitorea tu historial de trading en \"Mi Historial\" de los últimos 14 días y recibe informes de rendimiento diarios.\n\n"
             "4. <b>Retirar Tus Ganancias:</b> ¡Solicita fácilmente un pago cuando estés listo!\n\n"
-            "Ai Crypto Bot es más que un simple bot; es tu socio de trading inteligente personal diseñado para uso público, haciendo la inversión cripto accesible y rentable para todos."
+            "Nexo Trading Bot es más que un simple bot; es tu socio de trading inteligente personal diseñado para uso público, haciendo la inversión cripto accesible y rentable para todos."
         ),
         # Invest flow translations
         "invest_enter_amount": "📈 Ingresa el monto que deseas invertir (mínimo 10 USDT, ej: 100.50). Envía /cancel para cancelar.",
@@ -829,16 +829,16 @@ TRANSLATIONS = {
         "lang_set_success": "✅ تم تغيير اللغة بنجاح!",
         "lang_current": "اللغة الحالية: {lang}",
         "welcome_text": (
-            "🎉 <b>مرحباً بك في AiCrypto Bot!</b>\n\n"
+            "🎉 <b>مرحباً بك في Nexo Trading Bot!</b>\n\n"
             "🤖 مساعدك الشخصي للتداول بالذكاء الاصطناعي\n"
             "💹 تداول العملات المشفرة تلقائياً 24/7\n"
             "📊 الأرباح اليومية: 1.25% - 1.5%\n\n"
             "👇 اختر خياراً أدناه للبدء"
         ),
         "info_text": (
-            "🚀 <b>مرحباً بك في Ai Crypto Bot - طريقك الذكي لنمو العملات المشفرة!</b>\n\n"
-            "هل أنت مستعد لتنمية استثماراتك في العملات المشفرة بسهولة؟ يستخدم Ai Crypto Bot الذكاء الاصطناعي المتطور لتداول العملات المشفرة على مدار الساعة طوال أيام الأسبوع، بهدف تحقيق أرباح يومية ثابتة. خدماتنا التحليلية متعددة المستويات الفريدة تعني أن الذكاء الاصطناعي يتعلم ويتحسن باستمرار، مما يجعل كل صفقة أذكى من السابقة.\n\n"
-            "<b>لماذا تختار Ai Crypto Bot؟</b>\n\n"
+            "🚀 <b>مرحباً بك في Nexo Trading Bot - طريقك الذكي لنمو العملات المشفرة!</b>\n\n"
+            "هل أنت مستعد لتنمية استثماراتك في العملات المشفرة بسهولة؟ يستخدم Nexo Trading Bot الذكاء الاصطناعي المتطور لتداول العملات المشفرة على مدار الساعة طوال أيام الأسبوع، بهدف تحقيق أرباح يومية ثابتة. خدماتنا التحليلية متعددة المستويات الفريدة تعني أن الذكاء الاصطناعي يتعلم ويتحسن باستمرار، مما يجعل كل صفقة أذكى من السابقة.\n\n"
+            "<b>لماذا تختار Nexo Trading Bot؟</b>\n\n"
             "• 🤖 <b>تداول مدعوم بالذكاء الاصطناعي:</b> خوارزميات متقدمة تعمل على مدار الساعة، تزيل التخمين من تداول العملات المشفرة لك.\n\n"
             "• 📈 <b>عوائد يومية:</b> استمتع بأرباح يومية تنافسية تتراوح من 1.25٪ إلى 1.5٪ على استثماراتك.\n\n"
             "• 🔒 <b>آمن &amp; تلقائي:</b> تُدار أموالك بشكل آمن، والتداول تلقائي بالكامل – فقط أودع وشاهد محفظتك تنمو!\n\n"
@@ -851,7 +851,7 @@ TRANSLATIONS = {
             "2. <b>التفعيل &amp; التداول:</b> يصبح إيداعك نشطاً من دورة التداول التالية، ويبدأ الذكاء الاصطناعي بالتداول لك تلقائياً.\n\n"
             "3. <b>تتبع تقدمك:</b> راقب سجل تداولك في \"سجلي\" لآخر 14 يوماً واحصل على تقارير أداء يومية.\n\n"
             "4. <b>سحب أرباحك:</b> اطلب بسهولة دفعة عندما تكون مستعداً!\n\n"
-            "Ai Crypto Bot هو أكثر من مجرد بوت؛ إنه شريك التداول الذكي الشخصي المصمم للاستخدام العام، مما يجعل استثمار العملات المشفرة في متناول الجميع ومربحاً للجميع."
+            "Nexo Trading Bot هو أكثر من مجرد بوت؛ إنه شريك التداول الذكي الشخصي المصمم للاستخدام العام، مما يجعل استثمار العملات المشفرة في متناول الجميع ومربحاً للجميع."
         ),
         # Invest flow translations
         "invest_enter_amount": "📈 أدخل المبلغ الذي تريد استثماره (الحد الأدنى 10 USDT، مثال: 100.50). أرسل /cancel للإلغاء.",
@@ -933,16 +933,16 @@ TRANSLATIONS = {
         "lang_set_success": "✅ 语言更改成功！",
         "lang_current": "当前语言：{lang}",
         "welcome_text": (
-            "🎉 <b>欢迎来到AiCrypto机器人！</b>\n\n"
+            "🎉 <b>欢迎来到Nexo Trading Bot！</b>\n\n"
             "🤖 您的个人AI交易助手\n"
             "💹 全天候自动加密货币交易\n"
             "📊 每日利润：1.25% - 1.5%\n\n"
             "👇 选择下面的选项开始使用"
         ),
         "info_text": (
-            "🚀 <b>欢迎来到Ai Crypto Bot - 您的加密货币增长智能之路！</b>\n\n"
-            "准备好轻松增加您的加密货币投资了吗？Ai Crypto Bot利用尖端的人工智能全天候交易加密货币，旨在获得稳定的每日利润。我们独特的多层分析服务意味着AI不断学习和改进，使每笔交易都比上一笔更智能。\n\n"
-            "<b>为什么选择Ai Crypto Bot？</b>\n\n"
+            "🚀 <b>欢迎来到Nexo Trading Bot - 您的加密货币增长智能之路！</b>\n\n"
+            "准备好轻松增加您的加密货币投资了吗？Nexo Trading Bot利用尖端的人工智能全天候交易加密货币，旨在获得稳定的每日利润。我们独特的多层分析服务意味着AI不断学习和改进，使每笔交易都比上一笔更智能。\n\n"
+            "<b>为什么选择Nexo Trading Bot？</b>\n\n"
             "• 🤖 <b>AI驱动交易：</b>先进的算法全天候工作，为您消除加密货币交易的猜测。\n\n"
             "• 📈 <b>每日回报：</b>享受1.25%至1.5%的有竞争力的每日投资利润。\n\n"
             "• 🔒 <b>安全与自动化：</b>您的资金被安全管理，交易完全自动化——只需存款并观看您的投资组合增长！\n\n"
@@ -955,7 +955,7 @@ TRANSLATIONS = {
             "2. <b>激活与交易：</b>您的存款从下一个交易周期开始生效，AI开始自动为您交易。\n\n"
             "3. <b>追踪进度：</b>在\"我的历史\"中监控最近14天的交易历史，并接收每日表现报告。\n\n"
             "4. <b>提取利润：</b>随时轻松请求支付！\n\n"
-            "Ai Crypto Bot不仅仅是一个机器人；它是您的个人智能交易伙伴，专为公众使用而设计，使加密货币投资对每个人都可访问且有利可图。"
+            "Nexo Trading Bot不仅仅是一个机器人；它是您的个人智能交易伙伴，专为公众使用而设计，使加密货币投资对每个人都可访问且有利可图。"
         ),
         # Invest flow translations
         "invest_enter_amount": "📈 输入您想要投资的金额（最低10 USDT，例如100.50）。发送/cancel取消。",
@@ -1323,7 +1323,11 @@ TRADING_PAIRS = [
     'BTCUSDT', 'ETHUSDT', 'BNBUSDT', 'XRPUSDT', 'ADAUSDT',
     'DOGEUSDT', 'SOLUSDT', 'DOTUSDT', 'MATICUSDT', 'LTCUSDT',
     'AVAXUSDT', 'LINKUSDT', 'ATOMUSDT', 'UNIUSDT', 'XLMUSDT',
-    'ALGOUSDT', 'VETUSDT', 'FILUSDT', 'TRXUSDT', 'ETCUSDT'
+    'ALGOUSDT', 'VETUSDT', 'FILUSDT', 'TRXUSDT', 'ETCUSDT',
+    'SHIBUSDT', 'NEARUSDT', 'APTUSDT', 'ARBUSDT', 'OPUSDT',
+    'INJUSDT', 'SUIUSDT', 'PEPEUSDT', 'WIFUSDT', 'BONKUSDT',
+    'TAOUSDT', 'RENDERUSDT', 'STXUSDT', 'WLDUSDT', 'ICPUSDT',
+    'AAVEUSDT', 'MKRUSDT', 'JUPUSDT', 'TIAUSDT', 'PYTHUSDT'
 ]
 
 # Price simulation pairs (for fallback when Binance API unavailable)
@@ -1349,8 +1353,8 @@ def pick_random_pair() -> str:
 
 # Trading control
 TRADING_ENABLED = True
-TRADING_FREQ_MINUTES = 45  # Default: 45 minutes between trades
-TRADES_PER_DAY = 32  # Default: 32 trades per day (every 45 minutes)
+TRADING_FREQ_MINUTES = 96  # Default: 96 minutes between trades
+TRADES_PER_DAY = 15  # Default: 15 trades per day (every 96 minutes)
 MINUTES_PER_DAY = 24 * 60  # 1440 minutes in a day
 TRADING_JOB_ID = 'trading_job_scheduled'
 _trading_job = None
@@ -1387,9 +1391,6 @@ async def trading_job():
             try:
                 bal = float(user.balance or 0.0)
                 if bal <= 1.0:
-                    continue
-                # 30% chance to skip (70% chance to trade per job run)
-                if random.random() < 0.3:
                     continue
                 
                 # Calculate daily profit percentage so far
@@ -4206,7 +4207,7 @@ def main():
     )
     _scheduler.start()
 
-    logger.info("AiCrypto Bot STARTED")
+    logger.info("Nexo Trading Bot STARTED")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
