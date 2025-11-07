@@ -18,6 +18,7 @@ import random
 import re
 import asyncio
 import sys
+import json
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Optional, List
 from dotenv import load_dotenv
@@ -31,6 +32,8 @@ from telegram import (
     Update,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    InputMediaPhoto,
+    InputMediaVideo,
 )
 from telegram.ext import (
     Application,
@@ -196,6 +199,19 @@ class ErrorLog(Base):
     command = Column(String, nullable=True)  # Command that caused the error
     traceback = Column(String)  # Full traceback
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class BroadcastMessage(Base):
+    __tablename__ = 'broadcast_messages'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    message_text = Column(String)  # Text content
+    media_type = Column(String, nullable=True)  # 'photo', 'video', or None
+    media_file_ids = Column(String, nullable=True)  # JSON array of file IDs
+    target_audience = Column(String, default='all')  # 'all' or 'no_deposit'
+    is_active = Column(Boolean, default=True)  # Whether this broadcast is ready to send
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_at = Column(DateTime, nullable=True)  # When it was sent
+    sent_count = Column(Integer, default=0)  # Number of users who received it
 
 
 # DB init helpers
@@ -601,10 +617,11 @@ TRANSLATIONS = {
         "wallet_saved": "Saved wallet:\n<code>{wallet}</code>\nNetwork: {network}",
         "wallet_use_button": "Use this wallet for next withdrawal",
         "wallet_not_saved": "No withdrawal wallet saved. Set it with /wallet <address> [network]",
-        "wallet_send_address": "Send your withdrawal wallet address and optional network (e.g., 0xabc... ERC20).",
+        "wallet_send_address": "<b>Change Payout Wallet</b>\n\nSend your withdrawal wallet address and optional network\n• Example: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh BTC",
         # Help command
         "help_message": "Need assistance? Click below to chat with support:",
         "help_button": "💬 Open Support Chat",
+        "operation_cancelled": "❌ Operation cancelled.",
         # Balance page
         "balance_title": "Your Account Balance",
         "balance_available": "Available",
@@ -711,10 +728,11 @@ TRANSLATIONS = {
         "wallet_saved": "Portefeuille enregistré:\n<code>{wallet}</code>\nRéseau: {network}",
         "wallet_use_button": "Utiliser ce portefeuille pour le prochain retrait",
         "wallet_not_saved": "Aucun portefeuille de retrait enregistré. Configurez-le avec /wallet <adresse> [réseau]",
-        "wallet_send_address": "Envoyez l'adresse de votre portefeuille de retrait et le réseau facultatif (ex: 0xabc... ERC20).",
+        "wallet_send_address": "<b>Changer le Portefeuille de Retrait</b>\n\nEnvoyez l'adresse de votre portefeuille de retrait et le réseau facultatif\n• Exemple: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh BTC",
         # Help command
         "help_message": "Besoin d'aide? Cliquez ci-dessous pour discuter avec le support:",
         "help_button": "💬 Ouvrir le Chat de Support",
+        "operation_cancelled": "❌ Opération annulée.",
         # Balance page
         "balance_title": "Solde de Votre Compte",
         "balance_available": "Disponible",
@@ -821,10 +839,11 @@ TRANSLATIONS = {
         "wallet_saved": "Billetera guardada:\n<code>{wallet}</code>\nRed: {network}",
         "wallet_use_button": "Usar esta billetera para el próximo retiro",
         "wallet_not_saved": "No hay billetera de retiro guardada. Configúrala con /wallet <dirección> [red]",
-        "wallet_send_address": "Envía la dirección de tu billetera de retiro y red opcional (ej: 0xabc... ERC20).",
+        "wallet_send_address": "<b>Cambiar Billetera de Retiro</b>\n\nEnvía la dirección de tu billetera de retiro y red opcional\n• Ejemplo: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh BTC",
         # Help command
         "help_message": "¿Necesitas ayuda? Haz clic abajo para chatear con soporte:",
         "help_button": "💬 Abrir Chat de Soporte",
+        "operation_cancelled": "❌ Operación cancelada.",
         # Balance page
         "balance_title": "Saldo de Tu Cuenta",
         "balance_available": "Disponible",
@@ -931,10 +950,11 @@ TRANSLATIONS = {
         "wallet_saved": "المحفظة المحفوظة:\n<code>{wallet}</code>\nالشبكة: {network}",
         "wallet_use_button": "استخدم هذه المحفظة للسحب التالي",
         "wallet_not_saved": "لا توجد محفظة سحب محفوظة. قم بتعيينها باستخدام /wallet <العنوان> [الشبكة]",
-        "wallet_send_address": "أرسل عنوان محفظة السحب والشبكة الاختيارية (مثال: 0xabc... ERC20).",
+        "wallet_send_address": "<b>تغيير محفظة السحب</b>\n\nأرسل عنوان محفظة السحب والشبكة الاختيارية\n• مثال: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh BTC",
         # Help command
         "help_message": "تحتاج مساعدة؟ انقر أدناه للدردشة مع الدعم:",
         "help_button": "💬 فتح محادثة الدعم",
+        "operation_cancelled": "❌ تم إلغاء العملية.",
         # Balance page
         "balance_title": "رصيد حسابك",
         "balance_available": "متاح",
@@ -1042,10 +1062,11 @@ TRANSLATIONS = {
         "wallet_saved": "已保存的钱包：\n<code>{wallet}</code>\n网络：{network}",
         "wallet_use_button": "下次提现使用此钱包",
         "wallet_not_saved": "未保存提现钱包。使用/wallet <地址> [网络]设置。",
-        "wallet_send_address": "发送您的提现钱包地址和可选网络（例如，0xabc... ERC20）。",
+        "wallet_send_address": "<b>更改提现钱包</b>\n\n发送您的提现钱包地址和可选网络\n• 示例: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh BTC",
         # Help command
         "help_message": "需要帮助？点击下面与支持聊天：",
         "help_button": "💬 打开支持聊天",
+        "operation_cancelled": "❌ 操作已取消。",
         # Balance page
         "balance_title": "您的账户余额",
         "balance_available": "可用",
@@ -1745,7 +1766,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Exit/Return to main menu
     if data == "menu_exit":
-        await cancel_conv(update, context)
         async with async_session() as session:
             lang = await get_user_language(session, query.from_user.id, update=update)
         await send_main_menu(update, context, lang=lang)
@@ -1911,7 +1931,7 @@ async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_id = update.effective_user.id
     async with async_session() as session:
         lang = await get_user_language(session, user_id, update)
-    await update.effective_message.reply_text(t(lang, "invest_enter_amount"), reply_markup=None)
+    await update.effective_message.reply_text(t(lang, "invest_enter_amount"), reply_markup=None, parse_mode="HTML")
     return INVEST_AMOUNT
 
 async def invest_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1920,7 +1940,7 @@ async def invest_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lang = await get_user_language(session, user_id, update)
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(t(lang, "invest_enter_amount"))
+        await update.callback_query.message.reply_text(t(lang, "invest_enter_amount"), parse_mode="HTML")
     return INVEST_AMOUNT
 
 async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2156,7 +2176,7 @@ async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     async with async_session() as session:
         lang = await get_user_language(session, user_id, update)
-    await update.effective_message.reply_text(t(lang, "withdraw_enter_amount"))
+    await update.effective_message.reply_text(t(lang, "withdraw_enter_amount"), parse_mode="HTML")
     return WITHDRAW_AMOUNT
 
 async def withdraw_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2165,7 +2185,7 @@ async def withdraw_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
         lang = await get_user_language(session, user_id, update)
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(t(lang, "withdraw_enter_amount"))
+        await update.callback_query.message.reply_text(t(lang, "withdraw_enter_amount"), parse_mode="HTML")
     return WITHDRAW_AMOUNT
 
 async def withdraw_amount_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3243,6 +3263,278 @@ async def cmd_send_new_user_alert(update: Update, context: ContextTypes.DEFAULT_
     )
     await post_admin_log(context.bot, f"Admin sent new user alert to {sent_count} users")
 
+async def cmd_create_media_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /create_media_broadcast - Create a broadcast with photo/video
+    
+    Usage:
+    1. Send /create_media_broadcast
+    2. Send your media (photo or video)
+    3. Add caption with the message text
+    4. Choose target audience
+    """
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    await update.effective_message.reply_text(
+        "📸 <b>Create Media Broadcast</b>\n\n"
+        "Please send me:\n"
+        "• A photo or video (you can send multiple)\n"
+        "• Include a caption with your message text\n\n"
+        "After sending the media, I'll ask you to choose the target audience.\n\n"
+        "<i>Send your media now...</i>",
+        parse_mode="HTML"
+    )
+    
+    # Store that we're waiting for media from this admin
+    context.user_data['awaiting_broadcast_media'] = True
+    context.user_data['broadcast_media_files'] = []
+    context.user_data['broadcast_caption'] = None
+
+async def cmd_send_media_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /send_media_broadcast [all|no_deposit] - Send the latest prepared broadcast"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    # Get target audience from args
+    target = 'all'
+    if context.args and len(context.args) > 0:
+        if context.args[0].lower() in ['all', 'no_deposit']:
+            target = context.args[0].lower()
+    
+    async with async_session() as session:
+        # Get the latest active broadcast message
+        result = await session.execute(
+            select(BroadcastMessage).where(
+                BroadcastMessage.is_active.is_(True),
+                BroadcastMessage.sent_at.is_(None)
+            ).order_by(BroadcastMessage.created_at.desc()).limit(1)
+        )
+        broadcast = result.scalar_one_or_none()
+        
+        if not broadcast:
+            await update.effective_message.reply_text(
+                "❌ No broadcast message ready to send.\n\n"
+                "Use /create_media_broadcast to create one first."
+            )
+            return
+        
+        # Get target users
+        if target == 'all':
+            result = await session.execute(select(User))
+            users = result.scalars().all()
+            target_desc = "all users"
+        else:  # no_deposit
+            result = await session.execute(
+                select(User).where(
+                    ~User.id.in_(
+                        select(Transaction.user_id).where(
+                            Transaction.type == 'invest',
+                            Transaction.status == 'credited'
+                        ).distinct()
+                    )
+                )
+            )
+            users = result.scalars().all()
+            target_desc = "users without deposits"
+    
+    sent_count = 0
+    failed_count = 0
+    
+    status_msg = await update.effective_message.reply_text(
+        f"📤 Sending broadcast to {len(users)} {target_desc}..."
+    )
+    
+    # Parse media file IDs if present
+    media_file_ids = json.loads(broadcast.media_file_ids) if broadcast.media_file_ids else []
+    
+    for user in users:
+        try:
+            # Send media message based on type
+            if broadcast.media_type == 'photo' and media_file_ids:
+                if len(media_file_ids) == 1:
+                    await context.bot.send_photo(
+                        chat_id=user.id,
+                        photo=media_file_ids[0],
+                        caption=broadcast.message_text,
+                        parse_mode="HTML"
+                    )
+                else:
+                    # Send as media group
+                    media_group = [InputMediaPhoto(media=fid) for fid in media_file_ids]
+                    # Add caption to first photo
+                    media_group[0].caption = broadcast.message_text
+                    media_group[0].parse_mode = "HTML"
+                    await context.bot.send_media_group(
+                        chat_id=user.id,
+                        media=media_group
+                    )
+            elif broadcast.media_type == 'video' and media_file_ids:
+                if len(media_file_ids) == 1:
+                    await context.bot.send_video(
+                        chat_id=user.id,
+                        video=media_file_ids[0],
+                        caption=broadcast.message_text,
+                        parse_mode="HTML"
+                    )
+                else:
+                    # Send as media group
+                    media_group = [InputMediaVideo(media=fid) for fid in media_file_ids]
+                    media_group[0].caption = broadcast.message_text
+                    media_group[0].parse_mode = "HTML"
+                    await context.bot.send_media_group(
+                        chat_id=user.id,
+                        media=media_group
+                    )
+            else:
+                # Text only
+                await context.bot.send_message(
+                    chat_id=user.id,
+                    text=broadcast.message_text,
+                    parse_mode="HTML"
+                )
+            
+            sent_count += 1
+            
+            # Rate limiting
+            if sent_count % 20 == 0:
+                await asyncio.sleep(1)
+        except Exception as e:
+            logger.exception(f"Failed to send media broadcast to user {user.id}")
+            failed_count += 1
+    
+    # Update broadcast record
+    async with async_session() as session:
+        broadcast.sent_at = datetime.utcnow()
+        broadcast.sent_count = sent_count
+        broadcast.target_audience = target
+        session.add(broadcast)
+        await session.commit()
+    
+    await status_msg.edit_text(
+        f"✅ Broadcast complete!\n\n"
+        f"👥 Target: {target_desc}\n"
+        f"✔️ Sent: {sent_count}\n"
+        f"❌ Failed: {failed_count}\n\n"
+        f"Message preview:\n{broadcast.message_text[:100]}..."
+    )
+    await post_admin_log(context.bot, f"Admin sent media broadcast to {sent_count} {target_desc}")
+
+async def handle_broadcast_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle media uploads for broadcast creation"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        return
+    
+    # Check if we're waiting for broadcast media from this user
+    if not context.user_data.get('awaiting_broadcast_media'):
+        return
+    
+    # Get the media
+    media_files = context.user_data.get('broadcast_media_files', [])
+    caption = None
+    media_type = None
+    
+    if update.message.photo:
+        # Get the largest photo
+        file_id = update.message.photo[-1].file_id
+        media_files.append(file_id)
+        media_type = 'photo'
+        caption = update.message.caption
+    elif update.message.video:
+        file_id = update.message.video.file_id
+        media_files.append(file_id)
+        media_type = 'video'
+        caption = update.message.caption
+    
+    if caption and not context.user_data.get('broadcast_caption'):
+        context.user_data['broadcast_caption'] = caption
+    
+    context.user_data['broadcast_media_files'] = media_files
+    context.user_data['broadcast_media_type'] = media_type
+    
+    # Ask if they want to add more media or finalize
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Done - Finalize Broadcast", callback_data="finalize_broadcast")],
+        [InlineKeyboardButton("➕ Add More Media", callback_data="add_more_media")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="cancel_broadcast")]
+    ])
+    
+    await update.message.reply_text(
+        f"📸 Media received! ({len(media_files)} file(s))\n\n"
+        f"Caption: {caption or '(No caption)'}\n\n"
+        "What would you like to do?",
+        reply_markup=keyboard
+    )
+
+async def finalize_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Finalize the broadcast and save to database"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not _is_admin(user_id):
+        return
+    
+    media_files = context.user_data.get('broadcast_media_files', [])
+    caption = context.user_data.get('broadcast_caption', '')
+    media_type = context.user_data.get('broadcast_media_type')
+    
+    if not media_files and not caption:
+        await query.message.edit_text("❌ No media or caption provided. Broadcast cancelled.")
+        context.user_data.clear()
+        return
+    
+    # Save to database
+    async with async_session() as session:
+        broadcast = BroadcastMessage(
+            message_text=caption or '',
+            media_type=media_type,
+            media_file_ids=json.dumps(media_files) if media_files else None,
+            target_audience='all',  # Default, will be set when sending
+            is_active=True
+        )
+        session.add(broadcast)
+        await session.commit()
+        await session.refresh(broadcast)
+        broadcast_id = broadcast.id
+    
+    # Clear user data
+    context.user_data.clear()
+    
+    await query.message.edit_text(
+        f"✅ <b>Broadcast Created!</b>\n\n"
+        f"ID: #{broadcast_id}\n"
+        f"Media: {len(media_files)} file(s)\n"
+        f"Message: {caption[:100] if caption else '(No caption)'}...\n\n"
+        f"<b>Ready to send!</b>\n\n"
+        f"Use:\n"
+        f"• <code>/send_media_broadcast all</code> - Send to all users\n"
+        f"• <code>/send_media_broadcast no_deposit</code> - Send to users without deposits",
+        parse_mode="HTML"
+    )
+
+async def cancel_broadcast_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Cancel broadcast creation"""
+    query = update.callback_query
+    await query.answer()
+    
+    context.user_data.clear()
+    await query.message.edit_text("❌ Broadcast creation cancelled.")
+
+async def add_more_media_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Allow admin to add more media"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.message.edit_text(
+        "📸 Send more photos or videos...\n\n"
+        "When done, I'll ask you again."
+    )
+
 async def cmd_view_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /view_notifications - View current notification messages"""
     user_id = update.effective_user.id
@@ -3667,6 +3959,9 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/send_broadcast - Send broadcast to all users\n"
         "/send_new_user_alert - Send alert to non-investors\n"
         "/view_notifications - View current messages\n\n"
+        "**Media Broadcasts:**\n"
+        "/create_media_broadcast - Create broadcast with photo/video\n"
+        "/send_media_broadcast [all|no_deposit] - Send media broadcast\n\n"
         "**Analytics:**\n"
         "/admin_stats - View analytics dashboard\n"
         "/system_status - System health check\n"
@@ -4107,6 +4402,25 @@ async def cancel_conv(update: Optional[Update], context: ContextTypes.DEFAULT_TY
         context.user_data.clear()
     if update and getattr(update, "callback_query", None):
         await update.callback_query.answer()
+    
+    # Send cancellation message and show main menu
+    if update and update.effective_user:
+        user_id = update.effective_user.id
+        async with async_session() as session:
+            lang = await get_user_language(session, user_id, update)
+            cancel_msg = t(lang, "operation_cancelled")
+            
+            # Build proper main menu keyboard
+            reply_markup = build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang)
+            
+            # Send cancellation message with main menu
+            if update.effective_message:
+                await update.effective_message.reply_text(
+                    f"{cancel_msg}\n\n{MAIN_MENU_CAPTION}",
+                    reply_markup=reply_markup,
+                    parse_mode="HTML"
+                )
+    
     return ConversationHandler.END
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4217,9 +4531,9 @@ async def settings_start_wallet(update: Update, context: ContextTypes.DEFAULT_TY
         lang = await get_user_language(session, user_id, update)
     if update.callback_query:
         await update.callback_query.answer()
-        await update.callback_query.message.reply_text(t(lang, "wallet_send_address"))
+        await update.callback_query.message.reply_text(t(lang, "wallet_send_address"), parse_mode="HTML")
     else:
-        await update.effective_message.reply_text(t(lang, "wallet_send_address"))
+        await update.effective_message.reply_text(t(lang, "wallet_send_address"), parse_mode="HTML")
     return WITHDRAW_WALLET
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4282,6 +4596,9 @@ def main():
     global application, _scheduler
     application = Application.builder().token(BOT_TOKEN).build()
 
+    # Message handler for broadcast media (must be before conversation handler)
+    application.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, handle_broadcast_media))
+
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('invest', invest_cmd_handler),
@@ -4322,6 +4639,11 @@ def main():
     application.add_handler(CallbackQueryHandler(history_page_callback, pattern='^history_page_\\d+_\\d+$'))
     application.add_handler(CallbackQueryHandler(history_details_callback, pattern='^history_details_\\d+_\\d+_\\d+$'))
     application.add_handler(CallbackQueryHandler(history_back_callback, pattern='^history_back_\\d+_\\d+$'))
+
+    # Callback handlers for broadcast creation (must be before generic menu handler)
+    application.add_handler(CallbackQueryHandler(finalize_broadcast_callback, pattern='^finalize_broadcast$'))
+    application.add_handler(CallbackQueryHandler(cancel_broadcast_callback, pattern='^cancel_broadcast$'))
+    application.add_handler(CallbackQueryHandler(add_more_media_callback, pattern='^add_more_media$'))
 
     # generic menu handler should come after specific handlers
     application.add_handler(CallbackQueryHandler(menu_callback))
@@ -4371,6 +4693,10 @@ def main():
     application.add_handler(CommandHandler("send_broadcast", cmd_send_broadcast))
     application.add_handler(CommandHandler("send_new_user_alert", cmd_send_new_user_alert))
     application.add_handler(CommandHandler("view_notifications", cmd_view_notifications))
+    
+    # Media broadcast commands
+    application.add_handler(CommandHandler("create_media_broadcast", cmd_create_media_broadcast))
+    application.add_handler(CommandHandler("send_media_broadcast", cmd_send_media_broadcast))
     
     # Analytics and System commands
     application.add_handler(CommandHandler("admin_stats", cmd_admin_stats))
