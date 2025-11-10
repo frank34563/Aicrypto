@@ -4673,6 +4673,94 @@ async def cmd_list_user_addresses(update: Update, context: ContextTypes.DEFAULT_
         logger.exception("Error in cmd_list_user_addresses")
         await update.effective_message.reply_text(f"Error listing addresses: {str(e)}")
 
+async def cmd_set_tatum_api_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /set_tatum_api_key <api_key> - Configure Tatum API key securely"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    try:
+        args = context.args if hasattr(context, 'args') and context.args else []
+        if not args:
+            await update.effective_message.reply_text(
+                "Usage: /set_tatum_api_key <your-api-key>\n\n"
+                "Example: /set_tatum_api_key t-abc123xyz...\n\n"
+                "⚠️ <b>Security Note:</b>\n"
+                "• Delete your message after sending for security\n"
+                "• The key will be stored securely in the database\n"
+                "• Never share your API key in public channels\n\n"
+                "Get your API key at: https://tatum.io/",
+                parse_mode="HTML"
+            )
+            return
+        
+        api_key = args[0]
+        
+        # Validate API key format (Tatum keys typically start with 't-')
+        if not api_key.startswith('t-'):
+            await update.effective_message.reply_text(
+                "⚠️ Warning: Tatum API keys typically start with 't-'\n"
+                "Are you sure this is correct? The key has been saved anyway."
+            )
+        
+        # Store in database config table
+        async with async_session() as session:
+            await set_config(session, 'tatum_api_key', api_key)
+        
+        # Update environment variable for current session
+        os.environ['TATUM_API_KEY'] = api_key
+        
+        await update.effective_message.reply_text(
+            "✅ <b>Tatum API Key Configured!</b>\n\n"
+            "The API key has been securely stored.\n\n"
+            "⚠️ <b>IMPORTANT:</b> Delete your message containing the key for security.\n\n"
+            "Next steps:\n"
+            "• Test the integration: python3 tatum_integration_example.py\n"
+            "• Enable auto-deposit: /enable_auto_deposit",
+            parse_mode="HTML"
+        )
+        
+        await post_admin_log(context.bot, "Admin configured Tatum API key")
+        
+    except Exception as e:
+        logger.exception("Error in cmd_set_tatum_api_key")
+        await update.effective_message.reply_text(f"Error setting API key: {str(e)}")
+
+async def cmd_get_tatum_api_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /get_tatum_api_key - View current Tatum API key status"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    try:
+        async with async_session() as session:
+            api_key = await get_config(session, 'tatum_api_key')
+        
+        if api_key:
+            # Show masked version for security
+            masked_key = api_key[:8] + "..." + api_key[-8:] if len(api_key) > 16 else "***"
+            status_text = (
+                "🔑 <b>Tatum API Key Status:</b>\n\n"
+                f"✅ Configured: {masked_key}\n\n"
+                "To update: /set_tatum_api_key <new-key>\n"
+                "To test: python3 tatum_integration_example.py"
+            )
+        else:
+            status_text = (
+                "❌ <b>Tatum API Key Not Configured</b>\n\n"
+                "To set up:\n"
+                "/set_tatum_api_key <your-api-key>\n\n"
+                "Get your API key at: https://tatum.io/"
+            )
+        
+        await update.effective_message.reply_text(status_text, parse_mode="HTML")
+        
+    except Exception as e:
+        logger.exception("Error in cmd_get_tatum_api_key")
+        await update.effective_message.reply_text(f"Error checking API key: {str(e)}")
+
 async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /admin_cmds - Show all admin commands"""
     user_id = update.effective_user.id
@@ -4714,7 +4802,9 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/enable_auto_deposit - Enable auto-deposit feature\n"
         "/disable_auto_deposit - Disable auto-deposit feature\n"
         "/auto_deposit_status - Check auto-deposit status\n"
-        "/list_user_addresses <user_id> - List user's deposit addresses\n\n"
+        "/list_user_addresses <user_id> - List user's deposit addresses\n"
+        "/set_tatum_api_key <key> - Configure Tatum API key securely\n"
+        "/get_tatum_api_key - View Tatum API key status\n\n"
         "**Notifications:**\n"
         "/set_broadcast_message <message> - Set broadcast for all users\n"
         "/set_new_user_message <message> - Set message for non-investors\n"
@@ -5507,6 +5597,8 @@ def main():
     application.add_handler(CommandHandler("disable_auto_deposit", cmd_disable_auto_deposit))
     application.add_handler(CommandHandler("auto_deposit_status", cmd_auto_deposit_status))
     application.add_handler(CommandHandler("list_user_addresses", cmd_list_user_addresses))
+    application.add_handler(CommandHandler("set_tatum_api_key", cmd_set_tatum_api_key))
+    application.add_handler(CommandHandler("get_tatum_api_key", cmd_get_tatum_api_key))
     
     # Notification/Broadcast commands
     application.add_handler(CommandHandler("set_broadcast_message", cmd_set_broadcast_message))

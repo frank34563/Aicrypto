@@ -3,15 +3,17 @@
 Tatum API Integration Example for Auto-Deposit Feature
 Uses Tatum's unified API to manage multi-chain deposits in one place
 
-Test API Key: t-6911bd888b3751570bbc4157-e3a53d9baa3c4affbe0a78a9
+IMPORTANT: Set your Tatum API key via environment variable or admin command
 """
 
+import os
 import requests
 import hashlib
 from typing import Dict, Optional, List
 
-# Tatum API Configuration
-TATUM_API_KEY = "t-6911bd888b3751570bbc4157-e3a53d9baa3c4affbe0a78a9"
+# Tatum API Configuration - Load from environment variable for security
+# Admin can set this via /set_tatum_api_key command or TATUM_API_KEY environment variable
+TATUM_API_KEY = os.getenv('TATUM_API_KEY', '')  # Default empty, must be configured
 TATUM_BASE_URL = "https://api.tatum.io/v3"
 
 class TatumWalletManager:
@@ -193,6 +195,17 @@ def demo_tatum_integration():
     print("Multi-Chain Wallet Management in One Place")
     print("=" * 70)
     
+    # Check if API key is configured
+    if not TATUM_API_KEY:
+        print("\n❌ ERROR: Tatum API key not configured!")
+        print("\nTo run this demo, set your API key using one of these methods:")
+        print("1. Environment variable: export TATUM_API_KEY='your-api-key-here'")
+        print("2. Admin command in bot: /set_tatum_api_key your-api-key-here")
+        print("3. Edit tatum_integration_example.py (not recommended for production)")
+        print("\nGet your API key at: https://tatum.io/")
+        print("Test API key for demo: t-6911bd888b3751570bbc4157-e3a53d9baa3c4affbe0a78a9")
+        return
+    
     # Initialize Tatum manager
     tatum = TatumWalletManager(TATUM_API_KEY)
     
@@ -362,10 +375,14 @@ if __name__ == "__main__":
     # Run demonstration
     demo_tatum_integration()
     
-    # Show integration example
-    integration_with_existing_bot()
-    
-    print("\n" + "🎉" * 35)
-    print("\nAll crypto assets managed in ONE place with Tatum!")
-    print("Test API Key: t-6911bd888b3751570bbc4157-e3a53d9baa3c4affbe0a78a9")
-    print("\nDocumentation: https://docs.tatum.io/")
+    # Show integration example only if API key is configured
+    if TATUM_API_KEY:
+        integration_with_existing_bot()
+        
+        print("\n" + "🎉" * 35)
+        print("\nAll crypto assets managed in ONE place with Tatum!")
+        print("\n⚠️  SECURITY REMINDER:")
+        print("    • Never hardcode API keys in source code")
+        print("    • Always use environment variables or secure config")
+        print("    • Rotate API keys if accidentally exposed")
+        print("\nDocumentation: https://docs.tatum.io/")
