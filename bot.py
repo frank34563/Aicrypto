@@ -3859,6 +3859,9 @@ async def cmd_send_media_broadcast(update: Update, context: ContextTypes.DEFAULT
 async def handle_broadcast_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle media uploads for broadcast creation"""
     user_id = update.effective_user.id
+    
+    # Only handle if admin AND awaiting broadcast media
+    # This allows conversation handlers to process photos first
     if not _is_admin(user_id):
         return
     
@@ -4824,10 +4827,93 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/reset_daily_profit - Reset all users' daily profit to $0\n\n"
         "**Admin:**\n"
         "/admin_cmds - Show this message\n"
-        "/pending - Show pending transactions"
+        "/pending - Show pending transactions\n"
+        "/list_users [page] - List all users with details"
     )
     
     await update.effective_message.reply_text(commands_text)
+
+async def cmd_list_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /list_users [page] - List all users with username, ID, and join date"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    try:
+        # Get page number from args
+        args = context.args if hasattr(context, 'args') and context.args else []
+        page = 1
+        if args and args[0].isdigit():
+            page = max(1, int(args[0]))
+        
+        per_page = 20  # Show 20 users per page
+        
+        async with async_session() as session:
+            # Get all users ordered by join date (newest first)
+            result = await session.execute(
+                select(User).order_by(User.joined_at.desc())
+            )
+            all_users = result.scalars().all()
+            
+            if not all_users:
+                await update.effective_message.reply_text("No users found in the database.")
+                return
+            
+            total_users = len(all_users)
+            total_pages = (total_users + per_page - 1) // per_page
+            page = min(page, total_pages)
+            
+            # Paginate
+            start_idx = (page - 1) * per_page
+            end_idx = start_idx + per_page
+            page_users = all_users[start_idx:end_idx]
+            
+            # Build response text
+            text = f"👥 <b>All Users - Page {page}/{total_pages}</b>\n"
+            text += f"Total: {total_users} users\n\n"
+            
+            for user in page_users:
+                # Get username from Telegram
+                username = "N/A"
+                try:
+                    tg_user = await application.bot.get_chat(user.id)
+                    if hasattr(tg_user, 'username') and tg_user.username:
+                        username = f"@{tg_user.username}"
+                    elif hasattr(tg_user, 'first_name'):
+                        username = tg_user.first_name
+                        if hasattr(tg_user, 'last_name') and tg_user.last_name:
+                            username += f" {tg_user.last_name}"
+                except Exception:
+                    username = "Unknown"
+                
+                # Format join date
+                join_date = "N/A"
+                if user.joined_at:
+                    join_date = user.joined_at.strftime("%Y-%m-%d %H:%M")
+                
+                # Get balance
+                balance = float(user.balance or 0)
+                
+                text += (
+                    f"<b>ID:</b> <code>{user.id}</code>\n"
+                    f"<b>User:</b> {username}\n"
+                    f"<b>Joined:</b> {join_date}\n"
+                    f"<b>Balance:</b> ${balance:.2f}\n"
+                    "─────────────\n"
+                )
+            
+            # Add pagination info
+            if total_pages > 1:
+                text += f"\n📄 Page {page} of {total_pages}\n"
+                if page < total_pages:
+                    text += f"Use <code>/list_users {page + 1}</code> for next page"
+        
+        await update.effective_message.reply_text(text, parse_mode="HTML")
+        
+    except Exception as e:
+        logger.exception("Error in cmd_list_users")
+        await update.effective_message.reply_text(f"Error listing users: {str(e)}")
 
 async def cmd_list_trading_vars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /list_trading_vars - List all trading configuration variables"""
@@ -5501,9 +5587,6 @@ def main():
     global application, _scheduler
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Message handler for broadcast media (must be before conversation handler)
-    application.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, handle_broadcast_media))
-
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler('invest', invest_cmd_handler),
@@ -5526,6 +5609,9 @@ def main():
     )
 
     application.add_handler(conv_handler)
+
+    # Message handler for broadcast media (registered after conversation handler to not interfere with invest proof photos)
+    application.add_handler(MessageHandler((filters.PHOTO | filters.VIDEO) & ~filters.COMMAND, handle_broadcast_media))
 
     # language & settings handlers
     application.add_handler(CallbackQueryHandler(settings_language_open_callback, pattern='^settings_language$'))
@@ -5626,6 +5712,7 @@ def main():
     
     # Admin helper commands
     application.add_handler(CommandHandler("admin_cmds", cmd_admin_cmds))
+    application.add_handler(CommandHandler("list_users", cmd_list_users))
     application.add_handler(CommandHandler("list_trading_vars", cmd_list_trading_vars))
 
     application.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
