@@ -99,6 +99,10 @@ GLOBAL_NEGATIVE_TRADES_PER_DAY = 1  # default 1 negative trade per day
 # Minimum deposit amount in USDT
 MIN_DEPOSIT_AMOUNT = 10.0  # Minimum investment deposit is 10 USDT
 
+# Demo account configuration
+DEMO_ACCOUNT_ID = int(os.getenv('DEMO_ACCOUNT_ID', '999999999'))  # Default demo user ID
+DEMO_ACCOUNT_BALANCE = float(os.getenv('DEMO_ACCOUNT_BALANCE', '10000.0'))  # Default $10,000
+
 # Timezone configuration - use New York timezone for all operations
 NY_TZ = pytz.timezone('America/New_York')
 
@@ -330,6 +334,49 @@ async def log_transaction(session: AsyncSession, **data):
     await session.commit()
     await session.refresh(tx)
     return tx.id, data['ref']
+
+async def initialize_demo_account():
+    """
+    Initialize or reset the demo account with the configured balance.
+    This is useful for testing and simulation purposes.
+    """
+    try:
+        async with async_session() as session:
+            # Check if demo account exists
+            result = await session.execute(select(User).where(User.id == DEMO_ACCOUNT_ID))
+            demo_user = result.scalar_one_or_none()
+            
+            if demo_user:
+                # Update existing demo account
+                await session.execute(
+                    sa_update(User).where(User.id == DEMO_ACCOUNT_ID).values(
+                        balance=DEMO_ACCOUNT_BALANCE,
+                        balance_in_process=0.0,
+                        daily_profit=0.0,
+                        total_profit=0.0,
+                        joined_at=datetime.utcnow()
+                    )
+                )
+                await session.commit()
+                logger.info(f"Demo account {DEMO_ACCOUNT_ID} reset with balance ${DEMO_ACCOUNT_BALANCE:.2f}")
+            else:
+                # Create new demo account
+                demo_user = User(
+                    id=DEMO_ACCOUNT_ID,
+                    balance=DEMO_ACCOUNT_BALANCE,
+                    balance_in_process=0.0,
+                    daily_profit=0.0,
+                    total_profit=0.0,
+                    joined_at=datetime.utcnow()
+                )
+                session.add(demo_user)
+                await session.commit()
+                logger.info(f"Demo account {DEMO_ACCOUNT_ID} created with balance ${DEMO_ACCOUNT_BALANCE:.2f}")
+            
+            return True
+    except Exception as e:
+        logger.exception(f"Failed to initialize demo account: {e}")
+        return False
 
 # User trade config helpers
 async def get_user_trade_config(session: AsyncSession, user_id: int) -> Optional[Dict]:
@@ -4852,7 +4899,10 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/admin_cmds - Show this message\n"
         "/pending - Show pending transactions\n"
         "/list_users [page] - List all users with details\n"
-        "/credit_user <user_id> <amount> [reason] - Manually credit user balance"
+        "/credit_user <user_id> <amount> [reason] - Manually credit user balance\n\n"
+        "**Demo Account:**\n"
+        "/setup_demo_account - Initialize/reset demo account with $10,000\n"
+        "/demo_account_info - View demo account status and details"
     )
     
     await update.effective_message.reply_text(commands_text)
@@ -5054,6 +5104,108 @@ async def cmd_credit_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.exception("Error in cmd_credit_user")
         await update.effective_message.reply_text(f"❌ Error crediting user: {str(e)}")
+
+async def cmd_setup_demo_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /setup_demo_account - Initialize or reset the demo account"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    try:
+        success = await initialize_demo_account()
+        
+        if success:
+            async with async_session() as session:
+                demo_user = await get_user(session, DEMO_ACCOUNT_ID)
+                balance = float(demo_user.get('balance', 0))
+            
+            msg = (
+                f"✅ <b>Demo Account Setup Complete</b>\n\n"
+                f"<b>Demo User ID:</b> <code>{DEMO_ACCOUNT_ID}</code>\n"
+                f"<b>Initial Balance:</b> ${balance:.2f}\n\n"
+                f"<b>How to Use:</b>\n"
+                f"1. Start a chat with the bot using this Telegram account\n"
+                f"2. Use /start to initialize the account\n"
+                f"3. The account will have ${balance:.2f} available for testing\n"
+                f"4. All trading features can be tested with this account\n\n"
+                f"<b>Note:</b> You can reset this account anytime using /setup_demo_account\n\n"
+                f"<i>To check balance: /balance\n"
+                f"To view transactions: /history\n"
+                f"To see stats: /stats</i>"
+            )
+        else:
+            msg = "❌ Failed to setup demo account. Check logs for details."
+        
+        await update.effective_message.reply_text(msg, parse_mode="HTML")
+        
+    except Exception as e:
+        logger.exception("Error in cmd_setup_demo_account")
+        await update.effective_message.reply_text(f"❌ Error setting up demo account: {str(e)}")
+
+async def cmd_demo_account_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin command: /demo_account_info - Show demo account information"""
+    user_id = update.effective_user.id
+    if not _is_admin(user_id):
+        await update.effective_message.reply_text("Forbidden: admin only.")
+        return
+    
+    try:
+        async with async_session() as session:
+            result = await session.execute(select(User).where(User.id == DEMO_ACCOUNT_ID))
+            demo_user = result.scalar_one_or_none()
+            
+            if not demo_user:
+                msg = (
+                    f"ℹ️ <b>Demo Account Not Initialized</b>\n\n"
+                    f"<b>Configured Demo Account ID:</b> <code>{DEMO_ACCOUNT_ID}</code>\n"
+                    f"<b>Configured Initial Balance:</b> ${DEMO_ACCOUNT_BALANCE:.2f}\n\n"
+                    f"Use /setup_demo_account to create the demo account."
+                )
+            else:
+                # Get transaction count
+                tx_result = await session.execute(
+                    select(Transaction).where(Transaction.user_id == DEMO_ACCOUNT_ID)
+                )
+                transactions = tx_result.scalars().all()
+                
+                balance = float(demo_user.balance or 0)
+                balance_in_process = float(demo_user.balance_in_process or 0)
+                daily_profit = float(demo_user.daily_profit or 0)
+                total_profit = float(demo_user.total_profit or 0)
+                
+                # Calculate days since creation
+                joined_at = demo_user.joined_at
+                if joined_at:
+                    days_active = (datetime.utcnow() - joined_at).days
+                else:
+                    days_active = 0
+                
+                msg = (
+                    f"📊 <b>Demo Account Information</b>\n\n"
+                    f"<b>User ID:</b> <code>{DEMO_ACCOUNT_ID}</code>\n"
+                    f"<b>Status:</b> ✅ Active\n\n"
+                    f"<b>💰 Balances:</b>\n"
+                    f"Available: ${balance:.2f}\n"
+                    f"In Process: ${balance_in_process:.2f}\n"
+                    f"Total: ${balance + balance_in_process:.2f}\n\n"
+                    f"<b>📈 Profits:</b>\n"
+                    f"Today: ${daily_profit:.2f}\n"
+                    f"Total: ${total_profit:.2f}\n\n"
+                    f"<b>📊 Activity:</b>\n"
+                    f"Days Active: {days_active}\n"
+                    f"Transactions: {len(transactions)}\n\n"
+                    f"<b>⚙️ Actions:</b>\n"
+                    f"• /setup_demo_account - Reset to ${DEMO_ACCOUNT_BALANCE:.2f}\n"
+                    f"• /credit_user {DEMO_ACCOUNT_ID} <amount> - Add funds\n"
+                    f"• /list_users - View all users including demo"
+                )
+        
+        await update.effective_message.reply_text(msg, parse_mode="HTML")
+        
+    except Exception as e:
+        logger.exception("Error in cmd_demo_account_info")
+        await update.effective_message.reply_text(f"❌ Error getting demo account info: {str(e)}")
 
 async def cmd_list_trading_vars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /list_trading_vars - List all trading configuration variables"""
@@ -5876,6 +6028,10 @@ def main():
     application.add_handler(CommandHandler("list_users", cmd_list_users))
     application.add_handler(CommandHandler("credit_user", cmd_credit_user))
     application.add_handler(CommandHandler("list_trading_vars", cmd_list_trading_vars))
+    
+    # Demo account commands
+    application.add_handler(CommandHandler("setup_demo_account", cmd_setup_demo_account))
+    application.add_handler(CommandHandler("demo_account_info", cmd_demo_account_info))
 
     application.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
@@ -5900,6 +6056,12 @@ def main():
         loop.run_until_complete(init_trading_state())
     except Exception as e:
         logger.error("Error initializing trading state: %s", e)
+    
+    # Initialize demo account on startup
+    try:
+        loop.run_until_complete(initialize_demo_account())
+    except Exception as e:
+        logger.error("Error initializing demo account: %s", e)
     
     try:
         _scheduler = AsyncIOScheduler(event_loop=loop)
