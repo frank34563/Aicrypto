@@ -900,13 +900,13 @@ TRANSLATIONS = {
         "history_exit": "Exit ❌",
         # Demo account
         "demo_mode_title": "🎮 Demo Mode",
-        "demo_mode_info": "You are currently in <b>Demo Mode</b> with ${balance:.2f} for testing.\n\n✅ Features Available:\n• View balance and statistics\n• Experience automated trading\n• Track profit history\n\n❌ Features Disabled:\n• Deposits (use live account)\n• Withdrawals (use live account)\n\nTo access all features with real funds, exit to your live account.",
+        "demo_mode_info": "You are currently in <b>Demo Mode</b> with ${balance:.2f} for testing.\n\n✅ Features Available:\n• View balance and statistics\n• Experience automated trading\n• Track profit history\n\n❌ Features Disabled:\n• Deposits (use live account)\n• Withdrawals (use live account)\n\n⚠️ <b>Important:</b> Once you exit to your live account, <b>you cannot return to demo mode</b> on your own. Only an admin can restore demo access.\n\nTo access all features with real funds, confirm exit below.",
         "demo_deposit_blocked": "💰 <b>Deposits Not Available in Demo Mode</b>\n\nDemo accounts are pre-funded for testing purposes.\n\nTo make real deposits:\n1. Exit to your live account\n2. Use the Invest button\n3. Deposit your funds\n\nYour demo balance: ${balance:.2f}",
         "demo_withdraw_blocked": "💸 <b>Withdrawals Not Available in Demo Mode</b>\n\nDemo accounts cannot withdraw funds.\n\nTo make real withdrawals:\n1. Exit to your live account\n2. Make a deposit\n3. Earn profits through trading\n4. Use the Withdraw button\n\nYour demo balance: ${balance:.2f}",
         "exit_to_live": "🔄 Exit to Live Account",
         "welcome_demo": "🎮 Welcome to Demo Mode! You have ${balance:.2f} to test all features.",
         "confirm_exit_demo": "Confirm Exit to Live Account",
-        "demo_exit_success": "✅ <b>You have exited Demo Mode</b>\n\nYou are now using your live account. You can:\n• Make real deposits\n• Withdraw your funds\n• Trade with real money\n\n<i>Note: An admin can return you to demo mode if needed using the /return_to_demo command.</i>",
+        "demo_exit_success": "✅ <b>You have exited Demo Mode</b>\n\nYou are now using your live account. You can:\n• Make real deposits\n• Withdraw your funds\n• Trade with real money\n\n⚠️ <b>Important:</b> You cannot return to demo mode on your own. Only an admin can restore demo access if needed.",
     },
     "fr": {
         "main_menu_title": "📋 Menu Principal",
@@ -1020,13 +1020,13 @@ TRANSLATIONS = {
         "history_exit": "Quitter ❌",
         # Demo account
         "demo_mode_title": "🎮 Mode Démo",
-        "demo_mode_info": "Vous êtes actuellement en <b>Mode Démo</b> avec ${balance:.2f} pour tester.\n\n✅ Fonctionnalités Disponibles:\n• Voir solde et statistiques\n• Expérience trading automatisé\n• Suivre l'historique des profits\n\n❌ Fonctionnalités Désactivées:\n• Dépôts (utiliser compte réel)\n• Retraits (utiliser compte réel)\n\nPour accéder à toutes les fonctionnalités avec des fonds réels, quittez vers votre compte réel.",
+        "demo_mode_info": "Vous êtes actuellement en <b>Mode Démo</b> avec ${balance:.2f} pour tester.\n\n✅ Fonctionnalités Disponibles:\n• Voir solde et statistiques\n• Expérience trading automatisé\n• Suivre l'historique des profits\n\n❌ Fonctionnalités Désactivées:\n• Dépôts (utiliser compte réel)\n• Retraits (utiliser compte réel)\n\n⚠️ <b>Important:</b> Une fois sorti vers votre compte réel, <b>vous ne pouvez pas revenir en mode démo</b> par vous-même. Seul un admin peut restaurer l'accès démo.\n\nPour accéder à toutes les fonctionnalités avec des fonds réels, confirmez la sortie ci-dessous.",
         "demo_deposit_blocked": "💰 <b>Dépôts Non Disponibles en Mode Démo</b>\n\nLes comptes démo sont pré-financés à des fins de test.\n\nPour effectuer de vrais dépôts:\n1. Quittez vers votre compte réel\n2. Utilisez le bouton Investir\n3. Déposez vos fonds\n\nVotre solde démo: ${balance:.2f}",
         "demo_withdraw_blocked": "💸 <b>Retraits Non Disponibles en Mode Démo</b>\n\nLes comptes démo ne peuvent pas retirer de fonds.\n\nPour effectuer de vrais retraits:\n1. Quittez vers votre compte réel\n2. Effectuez un dépôt\n3. Gagnez des profits grâce au trading\n4. Utilisez le bouton Retirer\n\nVotre solde démo: ${balance:.2f}",
         "exit_to_live": "🔄 Quitter vers Compte Réel",
         "welcome_demo": "🎮 Bienvenue en Mode Démo! Vous avez ${balance:.2f} pour tester toutes les fonctionnalités.",
         "confirm_exit_demo": "Confirmer la Sortie vers Compte Réel",
-        "demo_exit_success": "✅ <b>Vous avez quitté le Mode Démo</b>\n\nVous utilisez maintenant votre compte réel. Vous pouvez:\n• Effectuer de vrais dépôts\n• Retirer vos fonds\n• Trader avec de l'argent réel\n\n<i>Remarque: Un administrateur peut vous renvoyer en mode démo si nécessaire en utilisant la commande /return_to_demo.</i>",
+        "demo_exit_success": "✅ <b>Vous avez quitté le Mode Démo</b>\n\nVous utilisez maintenant votre compte réel. Vous pouvez:\n• Effectuer de vrais dépôts\n• Retirer vos fonds\n• Trader avec de l'argent réel\n\n⚠️ <b>Important:</b> Vous ne pouvez pas revenir en mode démo par vous-même. Seul un admin peut restaurer l'accès démo si nécessaire.",
     },
     "es": {
         "main_menu_title": "📋 Menú Principal",
@@ -1140,13 +1140,13 @@ TRANSLATIONS = {
         "history_exit": "Salir ❌",
         # Demo account
         "demo_mode_title": "🎮 Modo Demo",
-        "demo_mode_info": "Estás actualmente en <b>Modo Demo</b> con ${balance:.2f} para probar.\n\n✅ Funciones Disponibles:\n• Ver saldo y estadísticas\n• Experimentar trading automatizado\n• Seguir historial de ganancias\n\n❌ Funciones Deshabilitadas:\n• Depósitos (usar cuenta real)\n• Retiros (usar cuenta real)\n\nPara acceder a todas las funciones con fondos reales, sal a tu cuenta real.",
+        "demo_mode_info": "Estás actualmente en <b>Modo Demo</b> con ${balance:.2f} para probar.\n\n✅ Funciones Disponibles:\n• Ver saldo y estadísticas\n• Experimentar trading automatizado\n• Seguir historial de ganancias\n\n❌ Funciones Deshabilitadas:\n• Depósitos (usar cuenta real)\n• Retiros (usar cuenta real)\n\n⚠️ <b>Importante:</b> Una vez que salgas a tu cuenta real, <b>no puedes volver al modo demo</b> por tu cuenta. Solo un admin puede restaurar el acceso demo.\n\nPara acceder a todas las funciones con fondos reales, confirma la salida abajo.",
         "demo_deposit_blocked": "💰 <b>Depósitos No Disponibles en Modo Demo</b>\n\nLas cuentas demo están pre-financiadas para pruebas.\n\nPara hacer depósitos reales:\n1. Sal a tu cuenta real\n2. Usa el botón Invertir\n3. Deposita tus fondos\n\nTu saldo demo: ${balance:.2f}",
         "demo_withdraw_blocked": "💸 <b>Retiros No Disponibles en Modo Demo</b>\n\nLas cuentas demo no pueden retirar fondos.\n\nPara hacer retiros reales:\n1. Sal a tu cuenta real\n2. Haz un depósito\n3. Gana ganancias mediante trading\n4. Usa el botón Retirar\n\nTu saldo demo: ${balance:.2f}",
         "exit_to_live": "🔄 Salir a Cuenta Real",
         "welcome_demo": "🎮 ¡Bienvenido al Modo Demo! Tienes ${balance:.2f} para probar todas las funciones.",
         "confirm_exit_demo": "Confirmar Salida a Cuenta Real",
-        "demo_exit_success": "✅ <b>Has salido del Modo Demo</b>\n\nAhora estás usando tu cuenta real. Puedes:\n• Hacer depósitos reales\n• Retirar tus fondos\n• Operar con dinero real\n\n<i>Nota: Un administrador puede devolverte al modo demo si es necesario usando el comando /return_to_demo.</i>",
+        "demo_exit_success": "✅ <b>Has salido del Modo Demo</b>\n\nAhora estás usando tu cuenta real. Puedes:\n• Hacer depósitos reales\n• Retirar tus fondos\n• Operar con dinero real\n\n⚠️ <b>Importante:</b> No puedes volver al modo demo por tu cuenta. Solo un admin puede restaurar el acceso demo si es necesario.",
     },
     "ar": {
         "main_menu_title": "📋 القائمة الرئيسية",
@@ -1260,13 +1260,13 @@ TRANSLATIONS = {
         "history_exit": "خروج ❌",
         # Demo account
         "demo_mode_title": "🎮 الوضع التجريبي",
-        "demo_mode_info": "أنت حالياً في <b>الوضع التجريبي</b> مع ${balance:.2f} للاختبار.\n\n✅ الميزات المتاحة:\n• عرض الرصيد والإحصائيات\n• تجربة التداول التلقائي\n• تتبع تاريخ الأرباح\n\n❌ الميزات المعطلة:\n• الإيداعات (استخدم الحساب الحقيقي)\n• السحوبات (استخدم الحساب الحقيقي)\n\nللوصول إلى جميع الميزات بأموال حقيقية، اخرج إلى حسابك الحقيقي.",
+        "demo_mode_info": "أنت حالياً في <b>الوضع التجريبي</b> مع ${balance:.2f} للاختبار.\n\n✅ الميزات المتاحة:\n• عرض الرصيد والإحصائيات\n• تجربة التداول التلقائي\n• تتبع تاريخ الأرباح\n\n❌ الميزات المعطلة:\n• الإيداعات (استخدم الحساب الحقيقي)\n• السحوبات (استخدم الحساب الحقيقي)\n\n⚠️ <b>مهم:</b> بمجرد خروجك إلى حسابك الحقيقي، <b>لا يمكنك العودة إلى الوضع التجريبي</b> بنفسك. يمكن للمسؤول فقط استعادة الوصول التجريبي.\n\nللوصول إلى جميع الميزات بأموال حقيقية، أكد الخروج أدناه.",
         "demo_deposit_blocked": "💰 <b>الإيداعات غير متاحة في الوضع التجريبي</b>\n\nالحسابات التجريبية ممولة مسبقاً لأغراض الاختبار.\n\nلإجراء إيداعات حقيقية:\n1. اخرج إلى حسابك الحقيقي\n2. استخدم زر الاستثمار\n3. أودع أموالك\n\nرصيدك التجريبي: ${balance:.2f}",
         "demo_withdraw_blocked": "💸 <b>السحوبات غير متاحة في الوضع التجريبي</b>\n\nالحسابات التجريبية لا يمكنها سحب الأموال.\n\nلإجراء سحوبات حقيقية:\n1. اخرج إلى حسابك الحقيقي\n2. قم بإيداع\n3. اكسب أرباحاً من خلال التداول\n4. استخدم زر السحب\n\nرصيدك التجريبي: ${balance:.2f}",
         "exit_to_live": "🔄 الخروج إلى الحساب الحقيقي",
         "welcome_demo": "🎮 مرحباً بك في الوضع التجريبي! لديك ${balance:.2f} لاختبار جميع الميزات.",
         "confirm_exit_demo": "تأكيد الخروج إلى الحساب الحقيقي",
-        "demo_exit_success": "✅ <b>لقد خرجت من الوضع التجريبي</b>\n\nأنت الآن تستخدم حسابك الحقيقي. يمكنك:\n• إجراء إيداعات حقيقية\n• سحب أموالك\n• التداول بأموال حقيقية\n\n<i>ملاحظة: يمكن للمسؤول إعادتك إلى الوضع التجريبي إذا لزم الأمر باستخدام الأمر /return_to_demo.</i>",
+        "demo_exit_success": "✅ <b>لقد خرجت من الوضع التجريبي</b>\n\nأنت الآن تستخدم حسابك الحقيقي. يمكنك:\n• إجراء إيداعات حقيقية\n• سحب أموالك\n• التداول بأموال حقيقية\n\n⚠️ <b>مهم:</b> لا يمكنك العودة إلى الوضع التجريبي بنفسك. يمكن للمسؤول فقط استعادة الوصول التجريبي إذا لزم الأمر.",
     },
     "zh": {
         "main_menu_title": "📋 主菜单",
@@ -1381,13 +1381,13 @@ TRANSLATIONS = {
         "history_exit": "退出 ❌",
         # Demo account
         "demo_mode_title": "🎮 演示模式",
-        "demo_mode_info": "您目前处于<b>演示模式</b>，有${balance:.2f}供测试。\n\n✅ 可用功能:\n• 查看余额和统计\n• 体验自动交易\n• 跟踪利润历史\n\n❌ 禁用功能:\n• 存款（使用真实账户）\n• 提款（使用真实账户）\n\n要使用真实资金访问所有功能，请退出到您的真实账户。",
+        "demo_mode_info": "您目前处于<b>演示模式</b>，有${balance:.2f}供测试。\n\n✅ 可用功能:\n• 查看余额和统计\n• 体验自动交易\n• 跟踪利润历史\n\n❌ 禁用功能:\n• 存款（使用真实账户）\n• 提款（使用真实账户）\n\n⚠️ <b>重要:</b> 一旦退出到真实账户，<b>您无法自行返回演示模式</b>。只有管理员可以恢复演示访问。\n\n要使用真实资金访问所有功能，请在下方确认退出。",
         "demo_deposit_blocked": "💰 <b>演示模式下无法存款</b>\n\n演示账户已预先注资用于测试。\n\n要进行真实存款:\n1. 退出到您的真实账户\n2. 使用投资按钮\n3. 存入您的资金\n\n您的演示余额: ${balance:.2f}",
         "demo_withdraw_blocked": "💸 <b>演示模式下无法提款</b>\n\n演示账户无法提取资金。\n\n要进行真实提款:\n1. 退出到您的真实账户\n2. 进行存款\n3. 通过交易赚取利润\n4. 使用提款按钮\n\n您的演示余额: ${balance:.2f}",
         "exit_to_live": "🔄 退出到真实账户",
         "welcome_demo": "🎮 欢迎来到演示模式！您有${balance:.2f}来测试所有功能。",
         "confirm_exit_demo": "确认退出到真实账户",
-        "demo_exit_success": "✅ <b>您已退出演示模式</b>\n\n您现在正在使用真实账户。您可以:\n• 进行真实存款\n• 提取您的资金\n• 用真实资金交易\n\n<i>注意：如果需要，管理员可以使用 /return_to_demo 命令将您返回演示模式。</i>",
+        "demo_exit_success": "✅ <b>您已退出演示模式</b>\n\n您现在正在使用真实账户。您可以:\n• 进行真实存款\n• 提取您的资金\n• 用真实资金交易\n\n⚠️ <b>重要:</b> 您无法自行返回演示模式。如有需要，只有管理员可以恢复演示访问。",
     }
 }
 DEFAULT_LANG = "en"
