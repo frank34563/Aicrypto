@@ -5437,7 +5437,7 @@ async def cmd_return_to_demo(update: Update, context: ContextTypes.DEFAULT_TYPE)
             )
             # For safety, we'll still allow it but with a warning
         
-        # Reset the has_exited_demo flag
+        # Reset the has_exited_demo flag and restore demo balance
         async with async_session() as session:
             # Check if user exists
             result = await session.execute(select(User).where(User.id == target_user_id))
@@ -5448,9 +5448,18 @@ async def cmd_return_to_demo(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 return
             
             old_status = user.has_exited_demo
+            old_balance = float(user.balance or 0)
             
-            # Update user to reset the exited flag
-            await update_user(session, target_user_id, has_exited_demo=False)
+            # Update user to reset the exited flag and restore demo balance
+            await update_user(
+                session, 
+                target_user_id, 
+                has_exited_demo=False,
+                balance=DEMO_ACCOUNT_BALANCE,
+                balance_in_process=0.0,
+                daily_profit=0.0,
+                total_profit=0.0
+            )
         
         # Send confirmation to admin
         admin_msg = (
@@ -5458,6 +5467,9 @@ async def cmd_return_to_demo(update: Update, context: ContextTypes.DEFAULT_TYPE)
             f"<b>User ID:</b> <code>{target_user_id}</code>\n"
             f"<b>Previous Status:</b> {'Exited demo' if old_status else 'In demo'}\n"
             f"<b>New Status:</b> In demo mode\n\n"
+            f"<b>Balance Reset:</b>\n"
+            f"Previous: ${old_balance:.2f}\n"
+            f"New: ${DEMO_ACCOUNT_BALANCE:.2f}\n\n"
             f"The user can now access demo features again and will see the demo menu."
         )
         await update.effective_message.reply_text(admin_msg, parse_mode="HTML")
@@ -5467,6 +5479,7 @@ async def cmd_return_to_demo(update: Update, context: ContextTypes.DEFAULT_TYPE)
             user_msg = (
                 f"🎮 <b>Welcome Back to Demo Mode!</b>\n\n"
                 f"An administrator has returned you to demo mode.\n\n"
+                f"<b>Demo Balance:</b> ${DEMO_ACCOUNT_BALANCE:.2f}\n\n"
                 f"You can now:\n"
                 f"• Test all features with demo balance\n"
                 f"• View trading simulations\n"
