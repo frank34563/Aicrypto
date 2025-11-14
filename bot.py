@@ -390,7 +390,7 @@ async def is_demo_account_active(session: AsyncSession, user_id: int) -> bool:
     Check if a user is currently in demo mode.
     Returns True only if:
     1. User ID matches DEMO_ACCOUNT_ID
-    2. User has not exited demo mode (has_exited_demo is False)
+    2. User has not exited demo mode (has_exited_demo is False or None)
     """
     if user_id != DEMO_ACCOUNT_ID:
         return False
@@ -401,7 +401,8 @@ async def is_demo_account_active(session: AsyncSession, user_id: int) -> bool:
     if not user:
         return True  # If user doesn't exist yet, treat as active demo
     
-    return not user.has_exited_demo
+    # Treat None and False as active demo (user hasn't exited)
+    return not bool(user.has_exited_demo)
 
 # User trade config helpers
 async def get_user_trade_config(session: AsyncSession, user_id: int) -> Optional[Dict]:
@@ -1473,7 +1474,11 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang:
                      InlineKeyboardButton(labels["settings"], callback_data="menu_settings")])
         rows.append([InlineKeyboardButton(labels["information"], callback_data="menu_info"),
                      InlineKeyboardButton(labels["help"], url=SUPPORT_URL)])
-        rows.append([InlineKeyboardButton(labels["exit"], callback_data="menu_exit")])
+        # Add exit button - demo accounts get "Exit to Live Account" button
+        if is_demo:
+            rows.append([InlineKeyboardButton(labels["exit_to_live"], callback_data="menu_exit_to_live")])
+        else:
+            rows.append([InlineKeyboardButton(labels["exit"], callback_data="menu_exit")])
         return InlineKeyboardMarkup(rows)
 
     tlen = 10
