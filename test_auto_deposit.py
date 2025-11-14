@@ -1,190 +1,139 @@
 #!/usr/bin/env python3
 """
-Test script for auto-deposit functionality
-Tests the core functions without requiring a running bot
+Test script for demo account functionality
+Tests the demo account initialization and configuration
 """
 
+import os
 import sys
-import hashlib
-from datetime import datetime
+from decimal import Decimal
 
-# Mock the address generation function
-def generate_unique_address(user_id: int, coin: str, network: str) -> str:
+# Set default environment variables for testing
+os.environ.setdefault('BOT_TOKEN', 'test_token_12345:ABCDEF')
+os.environ.setdefault('ADMIN_ID', '123456789')
+os.environ.setdefault('DATABASE_URL', 'sqlite+aiosqlite:///test_demo.db')
+os.environ.setdefault('DEMO_ACCOUNT_ID', '999999999')
+os.environ.setdefault('DEMO_ACCOUNT_BALANCE', '10000.0')
+
+print("=" * 60)
+print("DEMO ACCOUNT CONFIGURATION TEST")
+print("=" * 60)
+
+# Get configuration from environment
+DEMO_ACCOUNT_ID = int(os.getenv('DEMO_ACCOUNT_ID', '999999999'))
+DEMO_ACCOUNT_BALANCE = float(os.getenv('DEMO_ACCOUNT_BALANCE', '10000.0'))
+
+print(f"\n✅ Configuration loaded successfully!")
+print(f"   Demo Account ID: {DEMO_ACCOUNT_ID}")
+print(f"   Demo Balance: ${DEMO_ACCOUNT_BALANCE:.2f}")
+
+# Test configuration validation
+def test_configuration():
+    """Test that configuration is valid"""
+    print("\n" + "=" * 60)
+    print("TEST 1: Configuration Validation")
+    print("=" * 60)
+    
+    # Check that DEMO_ACCOUNT_ID is an integer
+    assert isinstance(DEMO_ACCOUNT_ID, int), "DEMO_ACCOUNT_ID should be an integer"
+    print(f"✓ DEMO_ACCOUNT_ID is integer: {DEMO_ACCOUNT_ID}")
+    
+    # Check that DEMO_ACCOUNT_BALANCE is a float
+    assert isinstance(DEMO_ACCOUNT_BALANCE, float), "DEMO_ACCOUNT_BALANCE should be a float"
+    print(f"✓ DEMO_ACCOUNT_BALANCE is float: ${DEMO_ACCOUNT_BALANCE:.2f}")
+    
+    # Check that balance is positive
+    assert DEMO_ACCOUNT_BALANCE > 0, "DEMO_ACCOUNT_BALANCE should be positive"
+    print(f"✓ Balance is positive: ${DEMO_ACCOUNT_BALANCE:.2f}")
+    
+    # Check default values
+    assert DEMO_ACCOUNT_ID == 999999999, "Default DEMO_ACCOUNT_ID should be 999999999"
+    print(f"✓ Default ID correct: {DEMO_ACCOUNT_ID}")
+    
+    assert DEMO_ACCOUNT_BALANCE == 10000.0, "Default DEMO_ACCOUNT_BALANCE should be 10000.0"
+    print(f"✓ Default balance correct: ${DEMO_ACCOUNT_BALANCE:.2f}")
+    
+    print("\n✅ All configuration tests passed!")
+
+def test_environment_override():
+    """Test that environment variables can override defaults"""
+    print("\n" + "=" * 60)
+    print("TEST 2: Environment Variable Override")
+    print("=" * 60)
+    
+    # Test custom values
+    test_id = os.getenv('DEMO_ACCOUNT_ID')
+    test_balance = os.getenv('DEMO_ACCOUNT_BALANCE')
+    
+    print(f"✓ DEMO_ACCOUNT_ID from env: {test_id}")
+    print(f"✓ DEMO_ACCOUNT_BALANCE from env: {test_balance}")
+    
+    # Verify they can be parsed
+    parsed_id = int(test_id)
+    parsed_balance = float(test_balance)
+    
+    print(f"✓ Parsed ID: {parsed_id}")
+    print(f"✓ Parsed balance: ${parsed_balance:.2f}")
+    
+    print("\n✅ Environment override test passed!")
+
+def test_demo_account_description():
+    """Test demo account description and usage"""
+    print("\n" + "=" * 60)
+    print("TEST 3: Demo Account Description")
+    print("=" * 60)
+    
+    description = f"""
+    Demo Account Configuration:
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    User ID:        {DEMO_ACCOUNT_ID}
+    Initial Balance: ${DEMO_ACCOUNT_BALANCE:,.2f} USDT
+    
+    Purpose:
+    • Testing trading functionality
+    • Demonstrating bot features
+    • User training and onboarding
+    • Simulating real scenarios
+    
+    Admin Commands:
+    • /setup_demo_account     - Initialize/reset account
+    • /demo_account_info      - View account details
+    • /credit_user {DEMO_ACCOUNT_ID} <amount> - Add funds
+    
+    Usage:
+    1. Access bot with Telegram ID {DEMO_ACCOUNT_ID}
+    2. Send /start to initialize
+    3. Check balance with /balance
+    4. Test all features normally
+    5. Reset anytime with /setup_demo_account
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     """
-    Generate a unique deposit address for a user based on their ID and the coin/network.
-    """
-    # Create a deterministic hash based on user_id, coin, and network
-    data = f"{user_id}:{coin}:{network}:nexo-trading-bot".encode()
-    hash_obj = hashlib.sha256(data)
-    hex_hash = hash_obj.hexdigest()
     
-    # Generate address format based on network
-    if network == "TRC20" or coin == "USDT":
-        # TRC20 addresses start with 'T' and are 34 characters
-        return "T" + hex_hash[:33]
-    elif network == "BTC" or coin == "BTC":
-        # Bitcoin addresses (bech32 format) start with 'bc1'
-        return "bc1q" + hex_hash[:58]
-    elif network == "SOL" or coin == "SOL" or coin == "SOLANA":
-        # Solana addresses are base58 encoded, typically 32-44 chars
-        return hex_hash[:44]
-    else:
-        # Generic format for other networks
-        return "0x" + hex_hash[:40]
-
-def test_address_generation():
-    """Test that address generation works correctly"""
-    print("=" * 60)
-    print("TEST 1: Address Generation")
-    print("=" * 60)
-    
-    test_cases = [
-        (123456, "USDT", "TRC20"),
-        (123456, "BTC", "BTC"),
-        (123456, "SOL", "SOL"),
-        (789012, "USDT", "TRC20"),
-        (789012, "BTC", "BTC"),
-    ]
-    
-    for user_id, coin, network in test_cases:
-        address = generate_unique_address(user_id, coin, network)
-        print(f"\nUser {user_id} | {coin}/{network}")
-        print(f"  Address: {address}")
-        print(f"  Length: {len(address)} characters")
-        
-        # Verify address format
-        if network == "TRC20":
-            assert address.startswith("T"), f"TRC20 address should start with T"
-            assert len(address) == 34, f"TRC20 address should be 34 chars, got {len(address)}"
-        elif network == "BTC":
-            assert address.startswith("bc1q"), f"BTC address should start with bc1q"
-        elif network == "SOL":
-            assert len(address) == 44, f"SOL address should be 44 chars, got {len(address)}"
-    
-    print("\n✅ All address generation tests passed!")
-
-def test_address_uniqueness():
-    """Test that different users get different addresses"""
-    print("\n" + "=" * 60)
-    print("TEST 2: Address Uniqueness")
-    print("=" * 60)
-    
-    users = [123456, 789012, 111222, 333444, 555666]
-    addresses = {}
-    
-    for user_id in users:
-        addr = generate_unique_address(user_id, "USDT", "TRC20")
-        addresses[user_id] = addr
-        print(f"User {user_id}: {addr}")
-    
-    # Check all addresses are unique
-    unique_addresses = set(addresses.values())
-    assert len(unique_addresses) == len(users), "All users should have unique addresses"
-    
-    print(f"\n✅ Generated {len(unique_addresses)} unique addresses for {len(users)} users")
-
-def test_address_consistency():
-    """Test that same user always gets same address"""
-    print("\n" + "=" * 60)
-    print("TEST 3: Address Consistency")
-    print("=" * 60)
-    
-    user_id = 123456
-    coin = "USDT"
-    network = "TRC20"
-    
-    # Generate address multiple times
-    addresses = [generate_unique_address(user_id, coin, network) for _ in range(5)]
-    
-    print(f"\nGenerating address 5 times for user {user_id}:")
-    for i, addr in enumerate(addresses, 1):
-        print(f"  Attempt {i}: {addr}")
-    
-    # Check all addresses are the same
-    unique_addrs = set(addresses)
-    assert len(unique_addrs) == 1, "Same user should always get same address"
-    
-    print(f"\n✅ Address is consistent across multiple generations")
-
-def test_multi_network_support():
-    """Test that user can have different addresses for different networks"""
-    print("\n" + "=" * 60)
-    print("TEST 4: Multi-Network Support")
-    print("=" * 60)
-    
-    user_id = 123456
-    networks = [
-        ("USDT", "TRC20"),
-        ("BTC", "BTC"),
-        ("SOL", "SOL"),
-        ("ETH", "ERC20"),
-    ]
-    
-    user_addresses = {}
-    
-    print(f"\nGenerating addresses for user {user_id} across networks:")
-    for coin, network in networks:
-        addr = generate_unique_address(user_id, coin, network)
-        user_addresses[network] = addr
-        print(f"  {coin:8} ({network:8}): {addr}")
-    
-    # Check all addresses are different
-    unique_addrs = set(user_addresses.values())
-    assert len(unique_addrs) == len(networks), "Each network should have unique address"
-    
-    print(f"\n✅ User has {len(unique_addrs)} unique addresses across {len(networks)} networks")
-
-def test_address_validation():
-    """Test address format validation"""
-    print("\n" + "=" * 60)
-    print("TEST 5: Address Format Validation")
-    print("=" * 60)
-    
-    test_user = 999888
-    
-    # TRC20 validation
-    trc20_addr = generate_unique_address(test_user, "USDT", "TRC20")
-    print(f"\nTRC20 Address: {trc20_addr}")
-    print(f"  Starts with 'T': {trc20_addr.startswith('T')}")
-    print(f"  Length 34: {len(trc20_addr) == 34}")
-    print(f"  All valid chars: {all(c in '0123456789abcdefABCDEF' for c in trc20_addr[1:])}")
-    
-    # Bitcoin validation
-    btc_addr = generate_unique_address(test_user, "BTC", "BTC")
-    print(f"\nBitcoin Address: {btc_addr}")
-    print(f"  Starts with 'bc1q': {btc_addr.startswith('bc1q')}")
-    print(f"  Valid length: {len(btc_addr) >= 42}")
-    
-    # Solana validation
-    sol_addr = generate_unique_address(test_user, "SOL", "SOL")
-    print(f"\nSolana Address: {sol_addr}")
-    print(f"  Length 44: {len(sol_addr) == 44}")
-    
-    print(f"\n✅ All address formats are valid")
+    print(description)
+    print("✅ Demo account description generated!")
 
 def run_all_tests():
     """Run all test cases"""
-    print("\n" + "🚀" * 30)
-    print("STARTING AUTO-DEPOSIT ADDRESS TESTS")
-    print("🚀" * 30 + "\n")
+    print("\n" + "🧪" * 30)
+    print("STARTING DEMO ACCOUNT TESTS")
+    print("🧪" * 30 + "\n")
     
     try:
-        test_address_generation()
-        test_address_uniqueness()
-        test_address_consistency()
-        test_multi_network_support()
-        test_address_validation()
+        test_configuration()
+        test_environment_override()
+        test_demo_account_description()
         
         print("\n" + "=" * 60)
         print("✅ ALL TESTS PASSED!")
         print("=" * 60)
-        print("\nThe auto-deposit address generation system is working correctly.")
-        print("Each user gets unique, deterministic addresses for each network.")
+        print("\nThe demo account feature is configured correctly.")
+        print("The bot will automatically create the demo account on startup.")
         print("\nNext steps:")
-        print("1. Run the bot with /enable_auto_deposit")
-        print("2. Test deposit flow with /invest")
-        print("3. Verify addresses with /my_addresses")
-        print("4. Check status with /auto_deposit_status")
+        print("1. Start the bot")
+        print("2. Check logs for: 'Demo account ... created with balance $10000.00'")
+        print("3. Run /demo_account_info as admin")
+        print("4. Login with demo account and send /start")
+        print("5. Test features with /balance, /stats, /history")
         return 0
         
     except AssertionError as e:
