@@ -106,7 +106,8 @@ Deposits to these addresses are automatically detected and credited!
 
 2. Enter amount (e.g., `100`)
 
-3. Select network (USDT, BTC, SOL)
+3. Select network from available options (e.g., USDT (TRC20), BTC (BTC), SOL (SOL), ETH (ERC20), etc.)
+   - Networks shown depend on what the admin has configured using `/set_deposit_wallet`
 
 4. You'll receive your unique address:
 ```
@@ -183,13 +184,17 @@ Your funds are now active and earning profits! 🚀
 
 ## Supported Networks
 
-Currently supports:
+The bot dynamically displays all networks configured by the admin via `/set_deposit_wallet`.
+
+Common examples:
 - **USDT (TRC20)** - Tron network
+- **USDT (ERC20)** - Ethereum network
 - **Bitcoin (BTC)** - Native Bitcoin
 - **Solana (SOL)** - Solana network
-- **Generic** - Ethereum-like networks
+- **ETH (ERC20)** - Ethereum
+- **Generic** - Other blockchain networks
 
-More networks can be added easily!
+Admins can add any coin/network combination using `/set_deposit_wallet <coin> <network> <address> [primary]`.
 
 ## Common Questions
 

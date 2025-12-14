@@ -99,10 +99,6 @@ GLOBAL_NEGATIVE_TRADES_PER_DAY = 1  # default 1 negative trade per day
 # Minimum deposit amount in USDT
 MIN_DEPOSIT_AMOUNT = 10.0  # Minimum investment deposit is 10 USDT
 
-# Demo account configuration
-DEMO_ACCOUNT_ID = int(os.getenv('DEMO_ACCOUNT_ID', '999999999'))  # Default demo user ID
-DEMO_ACCOUNT_BALANCE = float(os.getenv('DEMO_ACCOUNT_BALANCE', '10000.0'))  # Default $10,000
-
 # Timezone configuration - use New York timezone for all operations
 NY_TZ = pytz.timezone('America/New_York')
 
@@ -159,8 +155,6 @@ class User(Base):
     # Notification preferences
     mute_trade_notifications = Column(Boolean, default=False)  # Mute individual trade alerts
     mute_daily_summary = Column(Boolean, default=False)  # Mute daily summary reports
-    # Demo account flag
-    has_exited_demo = Column(Boolean, default=False)  # True if user has exited from demo mode
     joined_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -264,7 +258,6 @@ async def ensure_columns():
         try:
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_network VARCHAR"))
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS preferred_language VARCHAR"))
-            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS has_exited_demo BOOLEAN DEFAULT FALSE"))
             await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS proof VARCHAR"))
             await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS wallet VARCHAR"))
             await conn.execute(text("ALTER TABLE transactions ADD COLUMN IF NOT EXISTS network VARCHAR"))
@@ -337,72 +330,6 @@ async def log_transaction(session: AsyncSession, **data):
     await session.commit()
     await session.refresh(tx)
     return tx.id, data['ref']
-
-async def initialize_demo_account():
-    """
-    Initialize or reset the demo account with the configured balance.
-    This is useful for testing and simulation purposes.
-    """
-    try:
-        async with async_session() as session:
-            # Check if demo account exists
-            result = await session.execute(select(User).where(User.id == DEMO_ACCOUNT_ID))
-            demo_user = result.scalar_one_or_none()
-            
-            if demo_user:
-                # Update existing demo account
-                await session.execute(
-                    sa_update(User).where(User.id == DEMO_ACCOUNT_ID).values(
-                        balance=DEMO_ACCOUNT_BALANCE,
-                        balance_in_process=0.0,
-                        daily_profit=0.0,
-                        total_profit=0.0,
-                        joined_at=datetime.utcnow()
-                    )
-                )
-                await session.commit()
-                logger.info(f"Demo account {DEMO_ACCOUNT_ID} reset with balance ${DEMO_ACCOUNT_BALANCE:.2f}")
-            else:
-                # Create new demo account
-                demo_user = User(
-                    id=DEMO_ACCOUNT_ID,
-                    balance=DEMO_ACCOUNT_BALANCE,
-                    balance_in_process=0.0,
-                    daily_profit=0.0,
-                    total_profit=0.0,
-                    joined_at=datetime.utcnow()
-                )
-                session.add(demo_user)
-                await session.commit()
-                logger.info(f"Demo account {DEMO_ACCOUNT_ID} created with balance ${DEMO_ACCOUNT_BALANCE:.2f}")
-            
-            return True
-    except Exception as e:
-        logger.exception(f"Failed to initialize demo account: {e}")
-        return False
-
-def is_demo_account(user_id: int) -> bool:
-    """Check if a user ID matches the demo account ID (synchronous check)"""
-    return user_id == DEMO_ACCOUNT_ID
-
-async def is_demo_account_active(session: AsyncSession, user_id: int) -> bool:
-    """
-    Check if a user is currently in demo mode.
-    Returns True only if:
-    1. User ID matches DEMO_ACCOUNT_ID
-    2. User has not exited demo mode (has_exited_demo is False or None)
-    """
-    if user_id != DEMO_ACCOUNT_ID:
-        return False
-    
-    result = await session.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
-    
-    if not user:
-        return True  # If user doesn't exist yet, treat as active demo
-    
-    # Treat None and False as active demo (user hasn't exited)
-    return not bool(user.has_exited_demo)
 
 # User trade config helpers
 async def get_user_trade_config(session: AsyncSession, user_id: int) -> Optional[Dict]:
@@ -501,6 +428,25 @@ async def get_primary_deposit_wallet(session: AsyncSession, coin: str) -> Option
             'is_primary': False
         }
     return None
+
+def normalize_coin_network(coin: str, network: str = None) -> tuple:
+    """Normalize coin and network names for consistency (e.g., SOLANA -> SOL)"""
+    coin_normalized = "SOL" if coin == "SOLANA" else coin
+    network_normalized = "SOL" if network == "SOLANA" else network if network else coin_normalized
+    return coin_normalized, network_normalized
+
+def find_best_matching_wallet(wallets: List[Dict], network: str) -> Optional[Dict]:
+    """Find the best matching wallet from a list, preferring those that match the network and are primary"""
+    matching_wallet = None
+    
+    for wallet in wallets:
+        if wallet['network'] == network:
+            if wallet['is_primary']:
+                return wallet  # Return immediately if we find a primary match
+            elif matching_wallet is None:
+                matching_wallet = wallet
+    
+    return matching_wallet
 
 async def set_deposit_wallet(session: AsyncSession, coin: str, network: str, address: str, is_primary: bool = False):
     """Add or update a deposit wallet"""
@@ -899,15 +845,6 @@ TRANSLATIONS = {
         "history_prev": "⬅ Prev",
         "history_next": "Next ➡",
         "history_exit": "Exit ❌",
-        # Demo account
-        "demo_mode_title": "🎮 Demo Mode",
-        "demo_mode_info": "You are currently in <b>Demo Mode</b> with ${balance:.2f} for testing.\n\n✅ Features Available:\n• View balance and statistics\n• Experience automated trading\n• Track profit history\n\n❌ Features Disabled:\n• Deposits (use live account)\n• Withdrawals (use live account)\n\n⚠️ <b>Important:</b> Once you exit to your live account, <b>you cannot return to demo mode</b> on your own. Only an admin can restore demo access.\n\nTo access all features with real funds, confirm exit below.",
-        "demo_deposit_blocked": "💰 <b>Deposits Not Available in Demo Mode</b>\n\nDemo accounts are pre-funded for testing purposes.\n\nTo make real deposits:\n1. Exit to your live account\n2. Use the Invest button\n3. Deposit your funds\n\nYour demo balance: ${balance:.2f}",
-        "demo_withdraw_blocked": "💸 <b>Withdrawals Not Available in Demo Mode</b>\n\nDemo accounts cannot withdraw funds.\n\nTo make real withdrawals:\n1. Exit to your live account\n2. Make a deposit\n3. Earn profits through trading\n4. Use the Withdraw button\n\nYour demo balance: ${balance:.2f}",
-        "exit_to_live": "🔄 Exit to Live Account",
-        "welcome_demo": "🎮 Welcome to Demo Mode! You have ${balance:.2f} to test all features.",
-        "confirm_exit_demo": "Confirm Exit to Live Account",
-        "demo_exit_success": "✅ <b>You have exited Demo Mode</b>\n\nYou are now using your live account. You can:\n• Make real deposits\n• Withdraw your funds\n• Trade with real money\n\n⚠️ <b>Important:</b> You cannot return to demo mode on your own. Only an admin can restore demo access if needed.",
     },
     "fr": {
         "main_menu_title": "📋 Menu Principal",
@@ -1019,15 +956,6 @@ TRANSLATIONS = {
         "history_prev": "⬅ Préc",
         "history_next": "Suiv ➡",
         "history_exit": "Quitter ❌",
-        # Demo account
-        "demo_mode_title": "🎮 Mode Démo",
-        "demo_mode_info": "Vous êtes actuellement en <b>Mode Démo</b> avec ${balance:.2f} pour tester.\n\n✅ Fonctionnalités Disponibles:\n• Voir solde et statistiques\n• Expérience trading automatisé\n• Suivre l'historique des profits\n\n❌ Fonctionnalités Désactivées:\n• Dépôts (utiliser compte réel)\n• Retraits (utiliser compte réel)\n\n⚠️ <b>Important:</b> Une fois sorti vers votre compte réel, <b>vous ne pouvez pas revenir en mode démo</b> par vous-même. Seul un admin peut restaurer l'accès démo.\n\nPour accéder à toutes les fonctionnalités avec des fonds réels, confirmez la sortie ci-dessous.",
-        "demo_deposit_blocked": "💰 <b>Dépôts Non Disponibles en Mode Démo</b>\n\nLes comptes démo sont pré-financés à des fins de test.\n\nPour effectuer de vrais dépôts:\n1. Quittez vers votre compte réel\n2. Utilisez le bouton Investir\n3. Déposez vos fonds\n\nVotre solde démo: ${balance:.2f}",
-        "demo_withdraw_blocked": "💸 <b>Retraits Non Disponibles en Mode Démo</b>\n\nLes comptes démo ne peuvent pas retirer de fonds.\n\nPour effectuer de vrais retraits:\n1. Quittez vers votre compte réel\n2. Effectuez un dépôt\n3. Gagnez des profits grâce au trading\n4. Utilisez le bouton Retirer\n\nVotre solde démo: ${balance:.2f}",
-        "exit_to_live": "🔄 Quitter vers Compte Réel",
-        "welcome_demo": "🎮 Bienvenue en Mode Démo! Vous avez ${balance:.2f} pour tester toutes les fonctionnalités.",
-        "confirm_exit_demo": "Confirmer la Sortie vers Compte Réel",
-        "demo_exit_success": "✅ <b>Vous avez quitté le Mode Démo</b>\n\nVous utilisez maintenant votre compte réel. Vous pouvez:\n• Effectuer de vrais dépôts\n• Retirer vos fonds\n• Trader avec de l'argent réel\n\n⚠️ <b>Important:</b> Vous ne pouvez pas revenir en mode démo par vous-même. Seul un admin peut restaurer l'accès démo si nécessaire.",
     },
     "es": {
         "main_menu_title": "📋 Menú Principal",
@@ -1139,15 +1067,6 @@ TRANSLATIONS = {
         "history_prev": "⬅ Ant",
         "history_next": "Sig ➡",
         "history_exit": "Salir ❌",
-        # Demo account
-        "demo_mode_title": "🎮 Modo Demo",
-        "demo_mode_info": "Estás actualmente en <b>Modo Demo</b> con ${balance:.2f} para probar.\n\n✅ Funciones Disponibles:\n• Ver saldo y estadísticas\n• Experimentar trading automatizado\n• Seguir historial de ganancias\n\n❌ Funciones Deshabilitadas:\n• Depósitos (usar cuenta real)\n• Retiros (usar cuenta real)\n\n⚠️ <b>Importante:</b> Una vez que salgas a tu cuenta real, <b>no puedes volver al modo demo</b> por tu cuenta. Solo un admin puede restaurar el acceso demo.\n\nPara acceder a todas las funciones con fondos reales, confirma la salida abajo.",
-        "demo_deposit_blocked": "💰 <b>Depósitos No Disponibles en Modo Demo</b>\n\nLas cuentas demo están pre-financiadas para pruebas.\n\nPara hacer depósitos reales:\n1. Sal a tu cuenta real\n2. Usa el botón Invertir\n3. Deposita tus fondos\n\nTu saldo demo: ${balance:.2f}",
-        "demo_withdraw_blocked": "💸 <b>Retiros No Disponibles en Modo Demo</b>\n\nLas cuentas demo no pueden retirar fondos.\n\nPara hacer retiros reales:\n1. Sal a tu cuenta real\n2. Haz un depósito\n3. Gana ganancias mediante trading\n4. Usa el botón Retirar\n\nTu saldo demo: ${balance:.2f}",
-        "exit_to_live": "🔄 Salir a Cuenta Real",
-        "welcome_demo": "🎮 ¡Bienvenido al Modo Demo! Tienes ${balance:.2f} para probar todas las funciones.",
-        "confirm_exit_demo": "Confirmar Salida a Cuenta Real",
-        "demo_exit_success": "✅ <b>Has salido del Modo Demo</b>\n\nAhora estás usando tu cuenta real. Puedes:\n• Hacer depósitos reales\n• Retirar tus fondos\n• Operar con dinero real\n\n⚠️ <b>Importante:</b> No puedes volver al modo demo por tu cuenta. Solo un admin puede restaurar el acceso demo si es necesario.",
     },
     "ar": {
         "main_menu_title": "📋 القائمة الرئيسية",
@@ -1259,15 +1178,6 @@ TRANSLATIONS = {
         "history_prev": "⬅ السابق",
         "history_next": "التالي ➡",
         "history_exit": "خروج ❌",
-        # Demo account
-        "demo_mode_title": "🎮 الوضع التجريبي",
-        "demo_mode_info": "أنت حالياً في <b>الوضع التجريبي</b> مع ${balance:.2f} للاختبار.\n\n✅ الميزات المتاحة:\n• عرض الرصيد والإحصائيات\n• تجربة التداول التلقائي\n• تتبع تاريخ الأرباح\n\n❌ الميزات المعطلة:\n• الإيداعات (استخدم الحساب الحقيقي)\n• السحوبات (استخدم الحساب الحقيقي)\n\n⚠️ <b>مهم:</b> بمجرد خروجك إلى حسابك الحقيقي، <b>لا يمكنك العودة إلى الوضع التجريبي</b> بنفسك. يمكن للمسؤول فقط استعادة الوصول التجريبي.\n\nللوصول إلى جميع الميزات بأموال حقيقية، أكد الخروج أدناه.",
-        "demo_deposit_blocked": "💰 <b>الإيداعات غير متاحة في الوضع التجريبي</b>\n\nالحسابات التجريبية ممولة مسبقاً لأغراض الاختبار.\n\nلإجراء إيداعات حقيقية:\n1. اخرج إلى حسابك الحقيقي\n2. استخدم زر الاستثمار\n3. أودع أموالك\n\nرصيدك التجريبي: ${balance:.2f}",
-        "demo_withdraw_blocked": "💸 <b>السحوبات غير متاحة في الوضع التجريبي</b>\n\nالحسابات التجريبية لا يمكنها سحب الأموال.\n\nلإجراء سحوبات حقيقية:\n1. اخرج إلى حسابك الحقيقي\n2. قم بإيداع\n3. اكسب أرباحاً من خلال التداول\n4. استخدم زر السحب\n\nرصيدك التجريبي: ${balance:.2f}",
-        "exit_to_live": "🔄 الخروج إلى الحساب الحقيقي",
-        "welcome_demo": "🎮 مرحباً بك في الوضع التجريبي! لديك ${balance:.2f} لاختبار جميع الميزات.",
-        "confirm_exit_demo": "تأكيد الخروج إلى الحساب الحقيقي",
-        "demo_exit_success": "✅ <b>لقد خرجت من الوضع التجريبي</b>\n\nأنت الآن تستخدم حسابك الحقيقي. يمكنك:\n• إجراء إيداعات حقيقية\n• سحب أموالك\n• التداول بأموال حقيقية\n\n⚠️ <b>مهم:</b> لا يمكنك العودة إلى الوضع التجريبي بنفسك. يمكن للمسؤول فقط استعادة الوصول التجريبي إذا لزم الأمر.",
     },
     "zh": {
         "main_menu_title": "📋 主菜单",
@@ -1380,15 +1290,6 @@ TRANSLATIONS = {
         "history_prev": "⬅ 上一页",
         "history_next": "下一页 ➡",
         "history_exit": "退出 ❌",
-        # Demo account
-        "demo_mode_title": "🎮 演示模式",
-        "demo_mode_info": "您目前处于<b>演示模式</b>，有${balance:.2f}供测试。\n\n✅ 可用功能:\n• 查看余额和统计\n• 体验自动交易\n• 跟踪利润历史\n\n❌ 禁用功能:\n• 存款（使用真实账户）\n• 提款（使用真实账户）\n\n⚠️ <b>重要:</b> 一旦退出到真实账户，<b>您无法自行返回演示模式</b>。只有管理员可以恢复演示访问。\n\n要使用真实资金访问所有功能，请在下方确认退出。",
-        "demo_deposit_blocked": "💰 <b>演示模式下无法存款</b>\n\n演示账户已预先注资用于测试。\n\n要进行真实存款:\n1. 退出到您的真实账户\n2. 使用投资按钮\n3. 存入您的资金\n\n您的演示余额: ${balance:.2f}",
-        "demo_withdraw_blocked": "💸 <b>演示模式下无法提款</b>\n\n演示账户无法提取资金。\n\n要进行真实提款:\n1. 退出到您的真实账户\n2. 进行存款\n3. 通过交易赚取利润\n4. 使用提款按钮\n\n您的演示余额: ${balance:.2f}",
-        "exit_to_live": "🔄 退出到真实账户",
-        "welcome_demo": "🎮 欢迎来到演示模式！您有${balance:.2f}来测试所有功能。",
-        "confirm_exit_demo": "确认退出到真实账户",
-        "demo_exit_success": "✅ <b>您已退出演示模式</b>\n\n您现在正在使用真实账户。您可以:\n• 进行真实存款\n• 提取您的资金\n• 用真实资金交易\n\n⚠️ <b>重要:</b> 您无法自行返回演示模式。如有需要，只有管理员可以恢复演示访问。",
     }
 }
 DEFAULT_LANG = "en"
@@ -1447,10 +1348,7 @@ def build_back_to_menu_keyboard(lang: str = DEFAULT_LANG) -> InlineKeyboardMarku
     """Create a keyboard with a single 'Back to Menu' button"""
     return InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, "back_to_menu"), callback_data="menu_exit")]])
 
-def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang: str = DEFAULT_LANG, user_id: Optional[int] = None, is_demo_active: bool = False) -> InlineKeyboardMarkup:
-    # Use explicit is_demo_active parameter if provided, otherwise fall back to simple ID check
-    is_demo = is_demo_active if is_demo_active else (user_id and is_demo_account(user_id))
-    
+def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang: str = DEFAULT_LANG) -> InlineKeyboardMarkup:
     labels = {
         "balance": "💰 " + {"en":"Balance","fr":"Solde","es":"Saldo","ar":"الرصيد","zh":"余额"}.get(lang, "Balance"),
         "invest": "📈 " + {"en":"Invest","fr":"Investir","es":"Invertir","ar":"استثمر","zh":"投资"}.get(lang, "Invest"),
@@ -1461,7 +1359,6 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang:
         "information": "ℹ️ " + {"en":"Information","fr":"Information","es":"Información","ar":"المعلومات","zh":"信息"}.get(lang, "Information"),
         "help": "❓ " + {"en":"Help","fr":"Aide","es":"Ayuda","ar":"مساعدة","zh":"帮助"}.get(lang, "Help"),
         "exit": "⨉ " + {"en":"Exit","fr":"Quitter","es":"Salir","ar":"خروج","zh":"退出"}.get(lang, "Exit"),
-        "exit_to_live": t(lang, "exit_to_live"),
     }
 
     if not full_two_column:
@@ -1474,11 +1371,7 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang:
                      InlineKeyboardButton(labels["settings"], callback_data="menu_settings")])
         rows.append([InlineKeyboardButton(labels["information"], callback_data="menu_info"),
                      InlineKeyboardButton(labels["help"], url=SUPPORT_URL)])
-        # Add exit button - demo accounts get "Exit to Live Account" button
-        if is_demo:
-            rows.append([InlineKeyboardButton(labels["exit_to_live"], callback_data="menu_exit_to_live")])
-        else:
-            rows.append([InlineKeyboardButton(labels["exit"], callback_data="menu_exit")])
+        rows.append([InlineKeyboardButton(labels["exit"], callback_data="menu_exit")])
         return InlineKeyboardMarkup(rows)
 
     tlen = 10
@@ -1501,26 +1394,13 @@ def build_main_menu_keyboard(full_two_column: bool = MENU_FULL_TWO_COLUMN, lang:
             right_btn = InlineKeyboardButton(r, callback_data=r_cb)
         rows.append([left_btn, right_btn])
 
-    # Add exit button - demo accounts get "Exit to Live Account" button
-    if is_demo:
-        exit_label = _compact_pad(labels["exit_to_live"], target=(tlen*2)//2)
-        rows.append([InlineKeyboardButton(exit_label, callback_data="menu_exit_to_live")])
-    else:
-        exit_label = _compact_pad(labels["exit"], target=(tlen*2)//2)
-        rows.append([InlineKeyboardButton(exit_label, callback_data="menu_exit")])
+    exit_label = _compact_pad(labels["exit"], target=(tlen*2)//2)
+    rows.append([InlineKeyboardButton(exit_label, callback_data="menu_exit")])
     return InlineKeyboardMarkup(rows)
 
 async def send_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, lang: str = DEFAULT_LANG):
     """Send main menu with image, falling back to text-only if image fails"""
-    user_id = update.effective_user.id if update.effective_user else None
-    
-    # Check if user is in active demo mode
-    is_demo_active = False
-    if user_id:
-        async with async_session() as session:
-            is_demo_active = await is_demo_account_active(session, user_id)
-    
-    keyboard = build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang, user_id=user_id, is_demo_active=is_demo_active)
+    keyboard = build_main_menu_keyboard(MENU_FULL_TWO_COLUMN, lang=lang)
     photo_file = None
     
     try:
@@ -2147,46 +2027,6 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             lang = await get_user_language(session, query.from_user.id, update=update)
         await send_main_menu(update, context, lang=lang)
         return
-    
-    # Exit to Live Account (for demo users)
-    if data == "menu_exit_to_live":
-        user_id = query.from_user.id
-        async with async_session() as session:
-            lang = await get_user_language(session, user_id, update=update)
-            user = await get_user(session, user_id)
-            balance = float(user.get('balance', 0))
-        
-        info_text = t(lang, "demo_mode_info", balance=balance)
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ " + t(lang, "confirm_exit_demo"), callback_data="confirm_exit_to_live")],
-            [InlineKeyboardButton("« " + t(lang, "back_to_menu"), callback_data="menu_exit")]
-        ])
-        
-        try:
-            await query.message.edit_text(info_text, parse_mode="HTML", reply_markup=kb)
-        except Exception:
-            await query.message.reply_text(info_text, parse_mode="HTML", reply_markup=kb)
-        return
-    
-    # Confirm exit from demo mode to live account
-    if data == "confirm_exit_to_live":
-        user_id = query.from_user.id
-        async with async_session() as session:
-            lang = await get_user_language(session, user_id, update=update)
-            
-            # Mark user as having exited demo mode
-            await update_user(session, user_id, has_exited_demo=True)
-            
-            success_text = t(lang, "demo_exit_success")
-            kb = InlineKeyboardMarkup([
-                [InlineKeyboardButton("« " + t(lang, "back_to_menu"), callback_data="menu_exit")]
-            ])
-            
-            try:
-                await query.message.edit_text(success_text, parse_mode="HTML", reply_markup=kb)
-            except Exception:
-                await query.message.reply_text(success_text, parse_mode="HTML", reply_markup=kb)
-        return
 
     # Balance
     if data == "menu_balance":
@@ -2346,46 +2186,14 @@ async def send_balance_message(query_or_message, session: AsyncSession, user_id:
 # -----------------------
 async def invest_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # Block deposits for demo accounts
     async with async_session() as session:
-        if await is_demo_account_active(session, user_id):
-            lang = await get_user_language(session, user_id, update)
-            user = await get_user(session, user_id)
-            balance = float(user.get('balance', 0))
-            
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, "exit_to_live"), callback_data="menu_exit_to_live")]])
-            await update.effective_message.reply_text(
-                t(lang, "demo_deposit_blocked", balance=balance),
-                parse_mode="HTML",
-                reply_markup=kb
-            )
-            return ConversationHandler.END
-        
         lang = await get_user_language(session, user_id, update)
     await update.effective_message.reply_text(t(lang, "invest_enter_amount"), reply_markup=None, parse_mode="HTML")
     return INVEST_AMOUNT
 
 async def invest_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # Block deposits for demo accounts
     async with async_session() as session:
-        if await is_demo_account_active(session, user_id):
-            lang = await get_user_language(session, user_id, update)
-            user = await get_user(session, user_id)
-            balance = float(user.get('balance', 0))
-            
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, "exit_to_live"), callback_data="menu_exit_to_live")]])
-            if update.callback_query:
-                await update.callback_query.answer()
-                await update.callback_query.message.reply_text(
-                    t(lang, "demo_deposit_blocked", balance=balance),
-                    parse_mode="HTML",
-                    reply_markup=kb
-                )
-            return ConversationHandler.END
-        
         lang = await get_user_language(session, user_id, update)
     if update.callback_query:
         await update.callback_query.answer()
@@ -2414,12 +2222,49 @@ async def invest_amount_received(update: Update, context: ContextTypes.DEFAULT_T
     amount = round(amount, 2)
     context.user_data['invest_amount'] = amount
     
-    # Show network selection keyboard
-    keyboard = [
-        [InlineKeyboardButton("💵 USDT (TRC20)", callback_data="invest_network_USDT")],
-        [InlineKeyboardButton("₿ Bitcoin (BTC)", callback_data="invest_network_BTC")],
-        [InlineKeyboardButton("◎ Solana (SOL)", callback_data="invest_network_SOLANA")],
-    ]
+    # Build network selection keyboard dynamically from configured deposit wallets
+    async with async_session() as session:
+        wallets = await get_deposit_wallets(session)
+    
+    # Create a set to track unique (coin, network) combinations
+    seen_combinations = set()
+    keyboard = []
+    
+    # Define emoji mapping for common coins
+    coin_emoji = {
+        'USDT': '💵',
+        'BTC': '₿',
+        'SOL': '◎',
+        'SOLANA': '◎',
+        'ETH': 'Ξ',
+    }
+    
+    for wallet in wallets:
+        coin = wallet['coin']
+        network = wallet['network']
+        key = f"{coin}_{network}"
+        
+        # Skip if we've already added a button for this coin/network combination
+        if key in seen_combinations:
+            continue
+        
+        seen_combinations.add(key)
+        
+        # Build button label with emoji if available
+        emoji = coin_emoji.get(coin, '🪙')
+        label = f"{emoji} {coin} ({network})"
+        callback_data = f"invest_network_{coin}_{network}"
+        
+        keyboard.append([InlineKeyboardButton(label, callback_data=callback_data)])
+    
+    # If no wallets are configured, show error message
+    if not keyboard:
+        await msg.reply_text(
+            "❌ No deposit wallets are currently configured.\n"
+            "Please contact the administrator."
+        )
+        return ConversationHandler.END
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     network_msg = f"💰 Amount: {amount:.2f}$\n\nPlease select the network you want to use for deposit:"
@@ -2441,36 +2286,62 @@ async def invest_network_selected(update: Update, context: ContextTypes.DEFAULT_
             await query.message.reply_text(t(lang, "invest_no_amount"))
             return ConversationHandler.END
         
-        # Extract selected coin from callback data (e.g., "invest_network_USDT" -> "USDT")
-        coin = query.data.replace("invest_network_", "")
-        context.user_data['invest_coin'] = coin
+        # Extract selected coin and network from callback data
+        # Format: "invest_network_COIN_NETWORK" -> extract COIN and NETWORK
+        callback_parts = query.data.replace("invest_network_", "").split("_", 1)
         
-        # Map SOLANA to SOL for consistency
-        coin_lookup = coin if coin != "SOLANA" else "SOL"
+        if len(callback_parts) == 2:
+            # New format: invest_network_USDT_TRC20
+            coin = callback_parts[0]
+            network = callback_parts[1]
+        else:
+            # Legacy format for backward compatibility: invest_network_USDT
+            # Try to infer network from coin
+            coin = callback_parts[0]
+            if coin == "USDT":
+                network = "TRC20"
+            elif coin == "BTC":
+                network = "BTC"
+            elif coin == "SOLANA":
+                network = "SOL"
+            else:
+                network = coin  # Use coin as network if unknown
+        
+        context.user_data['invest_coin'] = coin
+        context.user_data['invest_network'] = network
+        
+        # Normalize SOLANA to SOL for consistency
+        coin_lookup, network_lookup = normalize_coin_network(coin, network)
         
         # Check if auto-deposit is enabled
         async with async_session() as session:
             if AUTO_DEPOSIT_ENABLED:
                 # Get or create unique deposit address for this user
-                user_address = await get_or_create_user_deposit_address(session, user_id, coin_lookup, coin_lookup)
+                user_address = await get_or_create_user_deposit_address(session, user_id, coin_lookup, network_lookup)
                 wallet = user_address['address']
-                network = user_address['network']
+                network_actual = user_address['network']
                 is_auto_deposit = True
             else:
                 # Use traditional shared wallet approach
-                deposit_wallet = await get_primary_deposit_wallet(session, coin_lookup)
+                # First try to find a wallet matching both coin and network
+                wallets = await get_deposit_wallets(session, coin_lookup)
+                deposit_wallet = find_best_matching_wallet(wallets, network_lookup)
+                
+                # If no exact match, fall back to primary wallet for the coin
+                if not deposit_wallet:
+                    deposit_wallet = await get_primary_deposit_wallet(session, coin_lookup)
                 
                 # Fall back to MASTER_WALLET if no wallet configured (only for USDT)
                 if deposit_wallet:
                     wallet = deposit_wallet['address']
-                    network = deposit_wallet['network']
+                    network_actual = deposit_wallet['network']
                 else:
                     if coin == "USDT":
                         wallet = MASTER_WALLET
-                        network = MASTER_NETWORK
+                        network_actual = MASTER_NETWORK
                     else:
                         await query.message.reply_text(
-                            f"❌ No deposit wallet configured for {coin}.\n"
+                            f"❌ No deposit wallet configured for {coin} ({network}).\n"
                             f"Please contact admin or choose a different network.",
                             reply_markup=InlineKeyboardMarkup([[
                                 InlineKeyboardButton("« Back to network selection", callback_data="invest_back_to_network")
@@ -2479,13 +2350,8 @@ async def invest_network_selected(update: Update, context: ContextTypes.DEFAULT_
                         return INVEST_NETWORK
                 is_auto_deposit = False
         
-        # Display network name based on coin
-        network_display_name = {
-            "USDT": "USDT (TRC20)",
-            "BTC": "Bitcoin (BTC)",
-            "SOLANA": "Solana (SOL)",
-            "SOL": "Solana (SOL)"
-        }.get(coin, coin)
+        # Build display name for the network
+        network_display_name = f"{coin} ({network_actual})"
         
         # Different message for auto-deposit vs manual
         if is_auto_deposit:
@@ -2493,7 +2359,7 @@ async def invest_network_selected(update: Update, context: ContextTypes.DEFAULT_
                 f"📥 Deposit {amount:.2f}$ using {network_display_name}\n\n"
                 f"✨ <b>Your Unique Deposit Address:</b>\n"
                 f"<code>{wallet}</code>\n\n"
-                f"Network: <b>{network}</b>\n\n"
+                f"Network: <b>{network_actual}</b>\n\n"
                 f"🔄 <b>Auto-Confirmation Enabled!</b>\n"
                 f"Your deposit will be automatically confirmed and credited once the transaction is detected on the blockchain.\n\n"
                 f"After sending, provide the transaction hash (txid) for faster processing."
@@ -2503,7 +2369,7 @@ async def invest_network_selected(update: Update, context: ContextTypes.DEFAULT_
                 f"📥 Deposit {amount:.2f}$ using {network_display_name}\n\n"
                 f"Send to wallet:\n"
                 f"Wallet: <code>{wallet}</code>\n"
-                f"Network: <b>{network}</b>\n\n"
+                f"Network: <b>{network_actual}</b>\n\n"
                 f"After sending, upload a screenshot OR send the transaction hash (txid)."
             )
         
@@ -2514,7 +2380,7 @@ async def invest_network_selected(update: Update, context: ContextTypes.DEFAULT_
         
         # Store wallet, network, and auto-deposit flag in user_data for later use
         context.user_data['invest_wallet'] = wallet
-        context.user_data['invest_network'] = network
+        context.user_data['invest_network'] = network_actual
         context.user_data['is_auto_deposit'] = is_auto_deposit
         
         return INVEST_PROOF
@@ -2748,46 +2614,14 @@ async def invest_confirm_callback(update: Update, context: ContextTypes.DEFAULT_
 # Withdraw handlers with full multilingual support
 async def withdraw_cmd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # Block withdrawals for demo accounts
     async with async_session() as session:
-        if await is_demo_account_active(session, user_id):
-            lang = await get_user_language(session, user_id, update)
-            user = await get_user(session, user_id)
-            balance = float(user.get('balance', 0))
-            
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, "exit_to_live"), callback_data="menu_exit_to_live")]])
-            await update.effective_message.reply_text(
-                t(lang, "demo_withdraw_blocked", balance=balance),
-                parse_mode="HTML",
-                reply_markup=kb
-            )
-            return ConversationHandler.END
-        
         lang = await get_user_language(session, user_id, update)
     await update.effective_message.reply_text(t(lang, "withdraw_enter_amount"), parse_mode="HTML")
     return WITHDRAW_AMOUNT
 
 async def withdraw_start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    
-    # Block withdrawals for demo accounts
     async with async_session() as session:
-        if await is_demo_account_active(session, user_id):
-            lang = await get_user_language(session, user_id, update)
-            user = await get_user(session, user_id)
-            balance = float(user.get('balance', 0))
-            
-            kb = InlineKeyboardMarkup([[InlineKeyboardButton(t(lang, "exit_to_live"), callback_data="menu_exit_to_live")]])
-            if update.callback_query:
-                await update.callback_query.answer()
-                await update.callback_query.message.reply_text(
-                    t(lang, "demo_withdraw_blocked", balance=balance),
-                    parse_mode="HTML",
-                    reply_markup=kb
-                )
-            return ConversationHandler.END
-        
         lang = await get_user_language(session, user_id, update)
     if update.callback_query:
         await update.callback_query.answer()
@@ -5095,11 +4929,7 @@ async def cmd_admin_cmds(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/admin_cmds - Show this message\n"
         "/pending - Show pending transactions\n"
         "/list_users [page] - List all users with details\n"
-        "/credit_user <user_id> <amount> [reason] - Manually credit user balance\n\n"
-        "**Demo Account:**\n"
-        "/setup_demo_account - Initialize/reset demo account with $10,000\n"
-        "/demo_account_info - View demo account status and details\n"
-        "/return_to_demo <user_id> - Return a user to demo mode (resets exit flag)"
+        "/credit_user <user_id> <amount> [reason] - Manually credit user balance"
     )
     
     await update.effective_message.reply_text(commands_text)
@@ -5301,217 +5131,6 @@ async def cmd_credit_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.exception("Error in cmd_credit_user")
         await update.effective_message.reply_text(f"❌ Error crediting user: {str(e)}")
-
-async def cmd_setup_demo_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command: /setup_demo_account - Initialize or reset the demo account"""
-    user_id = update.effective_user.id
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text("Forbidden: admin only.")
-        return
-    
-    try:
-        success = await initialize_demo_account()
-        
-        if success:
-            async with async_session() as session:
-                demo_user = await get_user(session, DEMO_ACCOUNT_ID)
-                balance = float(demo_user.get('balance', 0))
-            
-            msg = (
-                f"✅ <b>Demo Account Setup Complete</b>\n\n"
-                f"<b>Demo User ID:</b> <code>{DEMO_ACCOUNT_ID}</code>\n"
-                f"<b>Initial Balance:</b> ${balance:.2f}\n\n"
-                f"<b>How to Use:</b>\n"
-                f"1. Start a chat with the bot using this Telegram account\n"
-                f"2. Use /start to initialize the account\n"
-                f"3. The account will have ${balance:.2f} available for testing\n"
-                f"4. All trading features can be tested with this account\n\n"
-                f"<b>Note:</b> You can reset this account anytime using /setup_demo_account\n\n"
-                f"<i>To check balance: /balance\n"
-                f"To view transactions: /history\n"
-                f"To see stats: /stats</i>"
-            )
-        else:
-            msg = "❌ Failed to setup demo account. Check logs for details."
-        
-        await update.effective_message.reply_text(msg, parse_mode="HTML")
-        
-    except Exception as e:
-        logger.exception("Error in cmd_setup_demo_account")
-        await update.effective_message.reply_text(f"❌ Error setting up demo account: {str(e)}")
-
-async def cmd_demo_account_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command: /demo_account_info - Show demo account information"""
-    user_id = update.effective_user.id
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text("Forbidden: admin only.")
-        return
-    
-    try:
-        async with async_session() as session:
-            result = await session.execute(select(User).where(User.id == DEMO_ACCOUNT_ID))
-            demo_user = result.scalar_one_or_none()
-            
-            if not demo_user:
-                msg = (
-                    f"ℹ️ <b>Demo Account Not Initialized</b>\n\n"
-                    f"<b>Configured Demo Account ID:</b> <code>{DEMO_ACCOUNT_ID}</code>\n"
-                    f"<b>Configured Initial Balance:</b> ${DEMO_ACCOUNT_BALANCE:.2f}\n\n"
-                    f"Use /setup_demo_account to create the demo account."
-                )
-            else:
-                # Get transaction count
-                tx_result = await session.execute(
-                    select(Transaction).where(Transaction.user_id == DEMO_ACCOUNT_ID)
-                )
-                transactions = tx_result.scalars().all()
-                
-                balance = float(demo_user.balance or 0)
-                balance_in_process = float(demo_user.balance_in_process or 0)
-                daily_profit = float(demo_user.daily_profit or 0)
-                total_profit = float(demo_user.total_profit or 0)
-                
-                # Calculate days since creation
-                joined_at = demo_user.joined_at
-                if joined_at:
-                    days_active = (datetime.utcnow() - joined_at).days
-                else:
-                    days_active = 0
-                
-                msg = (
-                    f"📊 <b>Demo Account Information</b>\n\n"
-                    f"<b>User ID:</b> <code>{DEMO_ACCOUNT_ID}</code>\n"
-                    f"<b>Status:</b> ✅ Active\n\n"
-                    f"<b>💰 Balances:</b>\n"
-                    f"Available: ${balance:.2f}\n"
-                    f"In Process: ${balance_in_process:.2f}\n"
-                    f"Total: ${balance + balance_in_process:.2f}\n\n"
-                    f"<b>📈 Profits:</b>\n"
-                    f"Today: ${daily_profit:.2f}\n"
-                    f"Total: ${total_profit:.2f}\n\n"
-                    f"<b>📊 Activity:</b>\n"
-                    f"Days Active: {days_active}\n"
-                    f"Transactions: {len(transactions)}\n\n"
-                    f"<b>⚙️ Actions:</b>\n"
-                    f"• /setup_demo_account - Reset to ${DEMO_ACCOUNT_BALANCE:.2f}\n"
-                    f"• /credit_user {DEMO_ACCOUNT_ID} <amount> - Add funds\n"
-                    f"• /list_users - View all users including demo"
-                )
-        
-        await update.effective_message.reply_text(msg, parse_mode="HTML")
-        
-    except Exception as e:
-        logger.exception("Error in cmd_demo_account_info")
-        await update.effective_message.reply_text(f"❌ Error getting demo account info: {str(e)}")
-
-async def cmd_return_to_demo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin command: /return_to_demo <user_id> - Return a user to demo mode"""
-    user_id = update.effective_user.id
-    if not _is_admin(user_id):
-        await update.effective_message.reply_text("Forbidden: admin only.")
-        return
-    
-    try:
-        args = context.args if hasattr(context, 'args') and context.args else []
-        
-        # Check arguments
-        if len(args) < 1:
-            await update.effective_message.reply_text(
-                "Usage: /return_to_demo <user_id>\n\n"
-                "Example:\n"
-                f"• <code>/return_to_demo {DEMO_ACCOUNT_ID}</code>\n\n"
-                "This will reset the has_exited_demo flag and allow the user to return to demo mode.",
-                parse_mode="HTML"
-            )
-            return
-        
-        # Parse user_id
-        try:
-            target_user_id = int(args[0])
-        except ValueError:
-            await update.effective_message.reply_text("❌ Invalid user_id. Must be a number.")
-            return
-        
-        # Check if this is actually the demo account ID
-        if target_user_id != DEMO_ACCOUNT_ID:
-            await update.effective_message.reply_text(
-                f"⚠️ Warning: User {target_user_id} is not the configured demo account ID ({DEMO_ACCOUNT_ID}).\n\n"
-                f"This command is designed for the demo account. Are you sure you want to proceed?\n\n"
-                f"If you want to proceed anyway, the user will be marked as not having exited demo mode.",
-                parse_mode="HTML"
-            )
-            # For safety, we'll still allow it but with a warning
-        
-        # Reset the has_exited_demo flag and restore demo balance
-        async with async_session() as session:
-            # Check if user exists
-            result = await session.execute(select(User).where(User.id == target_user_id))
-            user = result.scalar_one_or_none()
-            
-            if not user:
-                await update.effective_message.reply_text(f"❌ User {target_user_id} not found in database.")
-                return
-            
-            old_status = user.has_exited_demo
-            old_balance = float(user.balance or 0)
-            
-            # Update user to reset the exited flag and restore demo balance
-            await update_user(
-                session, 
-                target_user_id, 
-                has_exited_demo=False,
-                balance=DEMO_ACCOUNT_BALANCE,
-                balance_in_process=0.0,
-                daily_profit=0.0,
-                total_profit=0.0
-            )
-        
-        # Send confirmation to admin
-        admin_msg = (
-            f"✅ <b>User Returned to Demo Mode</b>\n\n"
-            f"<b>User ID:</b> <code>{target_user_id}</code>\n"
-            f"<b>Previous Status:</b> {'Exited demo' if old_status else 'In demo'}\n"
-            f"<b>New Status:</b> In demo mode\n\n"
-            f"<b>Balance Reset:</b>\n"
-            f"Previous: ${old_balance:.2f}\n"
-            f"New: ${DEMO_ACCOUNT_BALANCE:.2f}\n\n"
-            f"The user can now access demo features again and will see the demo menu."
-        )
-        await update.effective_message.reply_text(admin_msg, parse_mode="HTML")
-        
-        # Notify the user
-        try:
-            user_msg = (
-                f"🎮 <b>Welcome Back to Demo Mode!</b>\n\n"
-                f"An administrator has returned you to demo mode.\n\n"
-                f"<b>Demo Balance:</b> ${DEMO_ACCOUNT_BALANCE:.2f}\n\n"
-                f"You can now:\n"
-                f"• Test all features with demo balance\n"
-                f"• View trading simulations\n"
-                f"• Navigate the demo interface\n\n"
-                f"Use /start to see your demo menu."
-            )
-            await context.application.bot.send_message(
-                chat_id=target_user_id,
-                text=user_msg,
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            logger.warning(f"Could not notify user {target_user_id}: {e}")
-            await update.effective_message.reply_text(
-                "⚠️ User status updated but notification failed. User might have blocked the bot.",
-                parse_mode="HTML"
-            )
-        
-        # Log to admin channel
-        await post_admin_log(
-            context.application.bot,
-            f"Admin {user_id} returned user {target_user_id} to demo mode"
-        )
-        
-    except Exception as e:
-        logger.exception("Error in cmd_return_to_demo")
-        await update.effective_message.reply_text(f"❌ Error returning user to demo: {str(e)}")
 
 async def cmd_list_trading_vars(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin command: /list_trading_vars - List all trading configuration variables"""
@@ -6193,16 +5812,6 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pass
         
         lang = await get_user_language(session, user_id, update=update)
-        
-        # Show demo welcome message for active demo accounts
-        if await is_demo_account_active(session, user_id):
-            user = await get_user(session, user_id)
-            balance = float(user.get('balance', 0))
-            demo_welcome = t(lang, "welcome_demo", balance=balance)
-            try:
-                await update.effective_message.reply_text(demo_welcome, parse_mode="HTML")
-            except Exception:
-                pass
     
     await send_main_menu(update, context, lang=lang)
 
@@ -6344,11 +5953,6 @@ def main():
     application.add_handler(CommandHandler("list_users", cmd_list_users))
     application.add_handler(CommandHandler("credit_user", cmd_credit_user))
     application.add_handler(CommandHandler("list_trading_vars", cmd_list_trading_vars))
-    
-    # Demo account commands
-    application.add_handler(CommandHandler("setup_demo_account", cmd_setup_demo_account))
-    application.add_handler(CommandHandler("demo_account_info", cmd_demo_account_info))
-    application.add_handler(CommandHandler("return_to_demo", cmd_return_to_demo))
 
     application.add_handler(MessageHandler(filters.Regex("^Balance$"), balance_text_handler))
 
@@ -6373,12 +5977,6 @@ def main():
         loop.run_until_complete(init_trading_state())
     except Exception as e:
         logger.error("Error initializing trading state: %s", e)
-    
-    # Initialize demo account on startup
-    try:
-        loop.run_until_complete(initialize_demo_account())
-    except Exception as e:
-        logger.error("Error initializing demo account: %s", e)
     
     try:
         _scheduler = AsyncIOScheduler(event_loop=loop)
